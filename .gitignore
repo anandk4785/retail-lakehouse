@@ -1,0 +1,49 @@
+# Ignore Gradle project-specific cache directory
+.gradle
+
+# Ignore Gradle build output directory
+build
+
+# IntelliJ
+
+.idea/
+
+*.iml
+
+
+# Gradle
+
+.gradle/
+
+build/
+
+
+# Logs
+
+logs/
+
+*.log
+
+
+# Mac/Linux
+
+.DS_Store
+
+
+# Spark
+
+spark-warehouse/
+
+
+# Hive
+
+metastore_db/
+
+
+# Generated Data
+
+data/dev/raw/
+
+data/dev/curated/
+
+data/dev/reports/

@@ -1,4 +1,4 @@
-package com.anand.retail.config;
+package com.anand.retail.factory;
 
 import org.apache.spark.sql.SparkSession;
 

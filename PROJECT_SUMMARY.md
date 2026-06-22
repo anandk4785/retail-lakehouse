@@ -486,6 +486,65 @@ US002 : SparkSessionFactory
 
 ---
 
+## Sprint 1
+
+### US001
+
+Project Bootstrap
+
+Status : DONE
+
+
+### US002
+
+Spark Foundation
+
+Implemented:
+
+- SparkSessionFactory
+
+- ConfigLoader
+
+- application.properties
+
+Status : DONE
+
+
+### US003
+
+Merged into US002
+
+Status : CLOSED
+
+
+### US004
+
+Hello Spark Job
+
+Implemented:
+
+- DatasetConstants
+
+- CustomerReader
+
+- HelloSparkJob
+
+- CustomerReaderTest
+
+Features:
+
+- Read customer CSV
+
+- Print Schema
+
+- Show sample records
+
+- Count records
+
+- Logging
+
+Status : DONE
+
 # Revision History
 
 | Date       | Change                             |

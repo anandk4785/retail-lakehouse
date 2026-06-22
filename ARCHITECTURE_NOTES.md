@@ -460,6 +460,56 @@ applied to:
 
 ---
 
+## Retail Lakehouse
+
+
+### Bronze
+
+```
+CSV
+
+↓
+
+Reader
+
+↓
+
+Dataset<Row>
+
+↓
+
+Parquet
+```
+
+
+### Silver
+
+```
+Validated Data
+
+↓
+
+Transformations
+
+↓
+
+Partitioned Parquet
+```
+
+### Gold
+
+```
+Business Metrics
+
+↓
+
+Reports
+
+↓
+
+Dashboards
+```
+
 # Revision History
 
 | Date       | Change                             |

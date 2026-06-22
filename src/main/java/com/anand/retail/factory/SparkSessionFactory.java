@@ -1,5 +1,6 @@
-package com.anand.retail.config;
+package com.anand.retail.factory;
 
+import com.anand.retail.config.ConfigLoader;
 import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

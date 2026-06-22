@@ -318,6 +318,73 @@ Spring Boot adds unnecessary complexity at this stage.
 
 ---
 
+# ADR-007 : Centralized SparkSession Creation
+
+## Status: Accepted ✅
+
+## Decision
+
+All Spark jobs will obtain SparkSession through:
+
+``` Java
+SparkSession spark =
+SparkSessionFactory.getSparkSession();
+```
+
+## Rejected Alternatives
+```
+new SparkSessionFactory()
+.createSparkSession();
+```
+
+## Reason:
+
+- Unnecessary object creation
+- SparkSession behaves like a singleton
+- More verbose
+
+## Benefits
+- Centralized Spark configurations
+- Single place to enable Hive
+- Easy to add configs later
+- Consistent Spark initialization
+- Similar to enterprise Spark projects
+
+---
+
+# ADR-008 : Centralized Warehouse Storage Inside Environment Directory
+
+## Status: Accepted ✅
+
+## Decision
+Instead of 
+```bash
+spark-warehouse/
+```
+at project root, we will use:
+```
+data
+
+└── dev
+
+    ├── raw
+
+    ├── curated
+
+    ├── reports
+
+    └── warehouse
+```
+
+## Reason
+
+- Keeps all generated data together
+- Easy cleanup
+- Mimics dev/qa/prod environments
+- Similar to lakehouse storage hierarchy
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:
@@ -330,6 +397,66 @@ The following decisions are expected later:
 * Table naming conventions
 * Data quality checks
 * Monitoring and alerting
+
+---
+
+# ADR-009 : Separate Dataset Root and Dataset Filenames
+
+## Status: Accepted ✅
+
+## Decision
+Instead of
+```properties
+customers.csv=/home/anand/projects/bigdata/data/olist_customers_dataset.csv
+```
+we will use:
+```properties
+dataset.root=/home/anand/projects/bigdata/data
+
+customers.csv=olist_customers_dataset.csv
+
+orders.csv=olist_orders_dataset.csv
+
+products.csv=olist_products_dataset.csv
+
+payments.csv=olist_order_payments_dataset.csv
+```
+
+## Benefits
+
+- Cleaner configuration
+- Easier environment switch
+- Less duplication
+- Easy to move datasets
+
+---
+
+# ADR-010 : Java Version Compatibility
+
+## Status: Accepted ✅
+
+## Decision:
+
+**Java 17** will be used for the project.
+
+Apache Spark 3.5.x requires JVM
+`--add-opens` arguments for **Java 17**.
+
+These arguments are configured
+centrally in build.gradle and
+applied to:
+
+- application runs
+
+- unit tests
+
+## Reason:
+
+- Modern Java LTS
+
+- Industry standard
+
+- Long term compatibility
 
 ---
 

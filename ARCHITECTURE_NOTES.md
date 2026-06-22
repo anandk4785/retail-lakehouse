@@ -431,6 +431,35 @@ payments.csv=olist_order_payments_dataset.csv
 
 ---
 
+# ADR-010 : Java Version Compatibility
+
+## Status: Accepted ✅
+
+## Decision:
+
+**Java 17** will be used for the project.
+
+Apache Spark 3.5.x requires JVM
+`--add-opens` arguments for **Java 17**.
+
+These arguments are configured
+centrally in build.gradle and
+applied to:
+
+- application runs
+
+- unit tests
+
+## Reason:
+
+- Modern Java LTS
+
+- Industry standard
+
+- Long term compatibility
+
+---
+
 # Revision History
 
 | Date       | Change                             |

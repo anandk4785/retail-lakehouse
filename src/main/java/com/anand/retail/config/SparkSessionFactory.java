@@ -83,7 +83,7 @@ public final class SparkSessionFactory {
                         )
                 )
 
-                .enableHiveSupport()
+                //.enableHiveSupport()  <-- Commented out until Sprint 4
 
                 .getOrCreate();
 

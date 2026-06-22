@@ -400,6 +400,37 @@ The following decisions are expected later:
 
 ---
 
+# ADR-009 : Separate Dataset Root and Dataset Filenames
+
+## Status: Accepted ✅
+
+## Decision
+Instead of
+```properties
+customers.csv=/home/anand/projects/bigdata/data/olist_customers_dataset.csv
+```
+we will use:
+```properties
+dataset.root=/home/anand/projects/bigdata/data
+
+customers.csv=olist_customers_dataset.csv
+
+orders.csv=olist_orders_dataset.csv
+
+products.csv=olist_products_dataset.csv
+
+payments.csv=olist_order_payments_dataset.csv
+```
+
+## Benefits
+
+- Cleaner configuration
+- Easier environment switch
+- Less duplication
+- Easy to move datasets
+
+---
+
 # Revision History
 
 | Date       | Change                             |

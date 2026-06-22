@@ -318,6 +318,40 @@ Spring Boot adds unnecessary complexity at this stage.
 
 ---
 
+# ADR-007 : Centralized SparkSession Creation
+
+## Status: Accepted ✅
+
+## Decision
+
+All Spark jobs will obtain SparkSession through:
+
+``` Java
+SparkSession spark =
+SparkSessionFactory.getSparkSession();
+```
+
+## Rejected Alternatives
+```
+new SparkSessionFactory()
+.createSparkSession();
+```
+
+## Reason:
+
+- Unnecessary object creation
+- SparkSession behaves like a singleton
+- More verbose
+
+## Benefits
+- Centralized Spark configurations
+- Single place to enable Hive
+- Easy to add configs later
+- Consistent Spark initialization
+- Similar to enterprise Spark projects
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:

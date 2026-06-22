@@ -352,6 +352,39 @@ new SparkSessionFactory()
 
 ---
 
+# ADR-008 : Centralized Warehouse Storage Inside Environment Directory
+
+## Status: Accepted ✅
+
+## Decision
+Instead of 
+```bash
+spark-warehouse/
+```
+at project root, we will use:
+```
+data
+
+└── dev
+
+    ├── raw
+
+    ├── curated
+
+    ├── reports
+
+    └── warehouse
+```
+
+## Reason
+
+- Keeps all generated data together
+- Easy cleanup
+- Mimics dev/qa/prod environments
+- Similar to lakehouse storage hierarchy
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:

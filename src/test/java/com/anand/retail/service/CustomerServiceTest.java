@@ -1,6 +1,6 @@
-package com.anand.retail.main;
+package com.anand.retail.service;
 
-import com.anand.retail.helper.CustomerJobHelper;
+import com.anand.retail.reader.CustomerReader;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -19,7 +19,7 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class CustomerJobHelperTest {
+public class CustomerServiceTest {
 
     private static SparkSession spark;
 
@@ -42,15 +42,19 @@ public class CustomerJobHelperTest {
 
     @Test
     void testLoadAndShowCustomersLogsOutput() {
-        Logger logger = LoggerFactory.getLogger(CustomerJobHelperTest.class);
+        Logger logger = LoggerFactory.getLogger(CustomerServiceTest.class);
 
-        // This test verifies that the helper method executes without throwing exceptions
+        // This test verifies that the helper/service method executes without throwing exceptions
         // The method reads actual customer data, prints schema and shows sample records
         // Note: This test assumes the data file exists in the configured path
 
         try {
+            // Enterprise DI Pattern: Inject the reader into the service
+            CustomerReader reader = new CustomerReader();
+            CustomerService service = new CustomerService(reader);
+
             // Call the helper method - this will read from actual data source
-            Dataset<Row> resultDf = CustomerJobHelper.loadAndShowCustomers(spark, logger);
+            Dataset<Row> resultDf = service.loadAndShowCustomers(spark);
 
             // Verify that the result is not null
             assertNotNull(resultDf, "Result DataFrame should not be null");

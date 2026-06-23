@@ -99,10 +99,11 @@ retail-lakehouse
 │       ├── java
 │       └── resources
 ├── data
-│   └── dev
-│       ├── curated
-│       ├── raw
-│       └── reports
+│   └── dev
+│       ├── bronze
+│       ├── silver
+│       ├── gold
+│       └── warehouse
 |
 ├── sql
 |
@@ -120,6 +121,7 @@ retail-lakehouse
 * Separation of concerns.
 * Easier navigation.
 * Mimics production repositories.
+* Bronze/Silver/Gold directories reflect actual lakehouse layer structure.
 
 ## Consequences
 
@@ -146,19 +148,19 @@ Store datasets outside Git repository.
 Location:
 
 ```text
-~/projects/bigdata/data
+~/projects/bigdata/data/olist_ecom_dataset
 ```
 
 Datasets:
 
 ```text
-customers.csv
+olist_customers_dataset.csv
 
-orders.csv
+olist_orders_dataset.csv
 
-products.csv
+olist_products_dataset.csv
 
-payments.csv
+olist_order_payments_dataset.csv
 ```
 
 ## Reason
@@ -186,23 +188,32 @@ Raw datasets should be separated from transformed and analytical data.
 
 ## Decision
 
-Use layered architecture:
+Use layered Bronze / Silver / Gold architecture:
 
 ```text
 CSV Files
 
 ↓
 
-Raw Layer
+Bronze Layer
 
-Parquet
+Raw Parquet
+(no transformations)
 
 ↓
 
-Curated Layer
+Silver Layer
 
+Cleaned Data
+Standardized Types
+Validated Records
+
+↓
+
+Gold Layer
+
+Business Metrics
 Dimension Tables
-
 Fact Tables
 
 ↓
@@ -224,10 +235,10 @@ Airflow DAG
 
 ## Reason
 
-* Industry standard approach.
-* Easier debugging.
+* Industry standard medallion architecture.
+* Easier debugging at each layer.
 * Supports incremental processing.
-* Clear separation of ingestion and analytics.
+* Clear separation of ingestion, transformation, and analytics.
 
 ## Consequences
 
@@ -357,7 +368,7 @@ new SparkSessionFactory()
 ## Status: Accepted ✅
 
 ## Decision
-Instead of 
+Instead of
 ```bash
 spark-warehouse/
 ```
@@ -367,11 +378,11 @@ data
 
 └── dev
 
-    ├── raw
+    ├── bronze
 
-    ├── curated
+    ├── silver
 
-    ├── reports
+    ├── gold
 
     └── warehouse
 ```
@@ -385,21 +396,6 @@ data
 
 ---
 
-# Future Architecture Decisions
-
-The following decisions are expected later:
-
-* Hive warehouse location
-* Partitioning strategy
-* Spark configuration tuning
-* Logging framework
-* Airflow deployment strategy
-* Table naming conventions
-* Data quality checks
-* Monitoring and alerting
-
----
-
 # ADR-009 : Separate Dataset Root and Dataset Filenames
 
 ## Status: Accepted ✅
@@ -407,11 +403,11 @@ The following decisions are expected later:
 ## Decision
 Instead of
 ```properties
-customers.csv=/home/anand/projects/bigdata/data/olist_customers_dataset.csv
+customers.csv=/home/anand/projects/bigdata/data/olist_ecom_dataset/olist_customers_dataset.csv
 ```
 we will use:
 ```properties
-dataset.root=/home/anand/projects/bigdata/data
+dataset.root=/home/anand/projects/bigdata/data/olist_ecom_dataset
 
 customers.csv=olist_customers_dataset.csv
 
@@ -460,7 +456,161 @@ applied to:
 
 ---
 
-## Retail Lakehouse
+# ADR-011 : Externalized Configuration
+
+## Status: Accepted ✅
+
+## Decision
+
+All environment-specific and runtime configuration is stored in:
+
+```text
+src/main/resources/application.properties
+```
+
+This covers:
+
+```properties
+# Application
+app.name=RetailLakehouse
+
+# Environment
+environment=dev
+
+# Spark
+spark.master=local[*]
+spark.sql.shuffle.partitions=4
+spark.sql.warehouse.dir=./data/dev/warehouse
+
+# Storage
+data.root=./data/dev
+bronze.path=./data/dev/bronze
+silver.path=./data/dev/silver
+gold.path=./data/dev/gold
+
+# Dataset Source
+dataset.root=/home/anand/projects/bigdata/data/olist_ecom_dataset
+customers.csv=olist_customers_dataset.csv
+orders.csv=olist_orders_dataset.csv
+products.csv=olist_products_dataset.csv
+payments.csv=olist_order_payments_dataset.csv
+```
+
+Configuration is loaded at startup through `ConfigLoader.get(key)`.
+
+## Reason
+
+- Avoid hardcoded values in Java source
+- Easier environment switch (dev / qa / prod)
+- Production-style config management
+- Single place to change paths or Spark settings
+
+## Consequences
+
+- All jobs remain environment-agnostic
+- Path changes require only a properties update
+- Supports future environment-specific property files
+
+---
+
+# ADR-012 : Explicit Spark Schemas Instead of inferSchema
+
+## Status: Accepted ✅
+
+## Decision
+
+All CSV readers will define schemas explicitly using dedicated schema classes:
+
+```
+CustomerSchema.getSchema();
+
+OrderSchema.getSchema();
+```
+
+Instead of:
+
+```
+.option("inferSchema", "true")
+```
+
+One schema class per entity:
+
+```text
+com.anand.retail.schema
+
+├── CustomerSchema
+
+└── OrderSchema
+```
+
+## Reason
+
+- `inferSchema` requires a full CSV scan before reading, which is slow
+- Explicit schemas guarantee predictable column types
+- Prevents silent type inference errors (e.g. timestamps read as strings)
+- Common production practice for large-scale pipelines
+- Better data quality from the first layer
+
+## Consequences
+
+- Schema must be kept in sync with the CSV source
+- Slightly more upfront code per entity
+- Faster job startup
+
+---
+
+# ADR-013 : Centralized Bronze Writer
+
+## Status: Accepted ✅
+
+## Decision
+
+All Bronze layer writes are routed through a single class:
+
+```
+BronzeWriter.writeTable(df, LakehouseTable.CUSTOMERS)
+
+BronzeWriter.writeTable(df, LakehouseTable.ORDERS)
+```
+
+The destination path is resolved automatically using the `LakehouseTable` enum:
+
+```
+Paths.get(bronzePath, table.getDirectoryName())
+```
+
+## Reason
+
+- Single place for all Bronze storage logic
+- Consistent `SaveMode.Overwrite` behaviour across all entities
+- New tables require zero changes to `BronzeWriter`
+- Path construction is not duplicated across job classes
+- Easy to extend (add partitioning, compression, metadata) in one place
+
+## Consequences
+
+- All Bronze jobs delegate writing to `BronzeWriter`
+- Consistent output paths enforced automatically
+- Clean separation between job orchestration and storage concerns
+
+---
+
+# Future Architecture Decisions
+
+The following decisions are expected later:
+
+* Hive warehouse location
+* Partitioning strategy
+* Spark configuration tuning
+* Logging framework
+* Airflow deployment strategy
+* Table naming conventions
+* Data quality checks
+* Monitoring and alerting
+
+---
+
+## Retail Lakehouse Layer Summary
 
 
 ### Bronze
@@ -479,12 +629,17 @@ Dataset<Row>
 ↓
 
 Parquet
+(SaveMode.Overwrite)
 ```
 
 
 ### Silver
 
 ```
+Bronze Parquet
+
+↓
+
 Validated Data
 
 ↓
@@ -499,6 +654,10 @@ Partitioned Parquet
 ### Gold
 
 ```
+Silver Data
+
+↓
+
 Business Metrics
 
 ↓
@@ -510,11 +669,19 @@ Reports
 Dashboards
 ```
 
+---
+
 # Revision History
 
-| Date       | Change                             |
-| ---------- | ---------------------------------- |
-| 2026-06-17 | Initial Architecture Notes created |
+| Date       | Change                                                    |
+| ---------- | --------------------------------------------------------- |
+| 2026-06-17 | Initial Architecture Notes created                        |
+| 2026-06-23 | Updated ADR-002 directory structure to Bronze/Silver/Gold |
+| 2026-06-23 | Updated ADR-003 dataset path to olist_ecom_dataset        |
+| 2026-06-23 | Updated ADR-004 to reflect medallion architecture         |
+| 2026-06-23 | Added ADR-011 : Externalized Configuration                |
+| 2026-06-23 | Added ADR-012 : Explicit Spark Schemas                    |
+| 2026-06-23 | Added ADR-013 : Centralized Bronze Writer                 |
 
 
 ---

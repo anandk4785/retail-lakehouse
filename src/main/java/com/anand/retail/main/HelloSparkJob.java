@@ -1,7 +1,8 @@
 package com.anand.retail.main;
 
 import com.anand.retail.factory.SparkSessionFactory;
-import com.anand.retail.helper.CustomerJobHelper;
+import com.anand.retail.reader.CustomerReader;
+import com.anand.retail.service.CustomerService;
 
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -19,15 +20,27 @@ public class HelloSparkJob {
             String[] args
     ) {
         logger.info(
-                "Starting Retail Lakehouse Job"
+                "Starting Retail Lakehouse Hello Spark Job"
         );
 
         SparkSession spark = SparkSessionFactory.getSparkSession();
 
-        Dataset<Row> customerDf = CustomerJobHelper.loadAndShowCustomers(spark, logger);
+        try {
+            // Wire up the dependencies since CustomerService is no longer static
+            CustomerReader customerReader = new CustomerReader();
+            CustomerService customerService = new CustomerService(customerReader);
 
-        spark.stop();
+            Dataset<Row> customerDf = customerService.loadAndShowCustomers(spark);
 
-        logger.info("Job Completed Successfully");
+            logger.info("HelloSparkJob Completed Successfully");
+
+        } catch (Exception e) {
+            logger.error("HelloSparkJob failed!", e);
+            throw new RuntimeException(e);
+        } finally {
+            if (spark != null) {
+                spark.stop();
+            }
+        }
     }
 }

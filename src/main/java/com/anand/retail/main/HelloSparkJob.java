@@ -1,7 +1,7 @@
 package com.anand.retail.main;
 
 import com.anand.retail.factory.SparkSessionFactory;
-import com.anand.retail.reader.CustomerReader;
+import com.anand.retail.helper.CustomerJobHelper;
 
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -23,18 +23,8 @@ public class HelloSparkJob {
         );
 
         SparkSession spark = SparkSessionFactory.getSparkSession();
-        CustomerReader customerReader = new CustomerReader();
 
-        Dataset<Row> customDf = customerReader.readCustomers(spark);
-
-        logger.info("Printing Schema");
-        customDf.printSchema();
-
-        logger.info("Showing sample records");
-        customDf.show(10, false);
-
-        long customerCount = customDf.count();
-        logger.info("Customer Count : {}", customerCount);
+        Dataset<Row> customerDf = CustomerJobHelper.loadAndShowCustomers(spark, logger);
 
         spark.stop();
 

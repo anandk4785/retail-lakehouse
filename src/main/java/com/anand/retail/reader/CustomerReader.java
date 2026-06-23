@@ -3,6 +3,7 @@ package com.anand.retail.reader;
 import com.anand.retail.config.ConfigLoader;
 import com.anand.retail.constants.DatasetConstants;
 
+import com.anand.retail.schema.CustomerSchema;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.SparkSession;
@@ -31,8 +32,9 @@ public class CustomerReader {
 
         return spark
                 .read()
-                .option("header", "true")
-                .option("inferSchema", "true")
+                .option("header", true)
+                .schema(CustomerSchema.getSchema())
+                //.option("inferSchema", "true")
                 .csv(fullPath);
     }
 }

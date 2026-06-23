@@ -42,8 +42,10 @@ metastore_db/
 
 # Generated Data
 
-data/dev/raw/
+data/dev/bronze/
 
-data/dev/curated/
+data/dev/silver/
 
-data/dev/reports/
+data/dev/gold/
+
+data/test

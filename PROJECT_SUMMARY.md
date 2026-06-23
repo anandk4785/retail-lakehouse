@@ -1,4 +1,3 @@
-
 ---
 
 <h1 align="center">PROJECT SUMMARY</h1>
@@ -96,12 +95,14 @@ retail-lakehouse
 ├── data
 
     └── dev
-    
-        ├── raw
-    
-        ├── curated
-    
-        └── reports
+
+        ├── bronze
+
+        ├── silver
+
+        ├── gold
+
+        └── warehouse
 
 └── src
 
@@ -118,18 +119,18 @@ retail-lakehouse
 Outside Repository
 
 
-~/projects/bigdata/data
+~/projects/bigdata/data/olist_ecom_dataset
 
 
 Contains:
 
-customers.csv
+olist_customers_dataset.csv
 
-orders.csv
+olist_orders_dataset.csv
 
-products.csv
+olist_products_dataset.csv
 
-payments.csv
+olist_order_payments_dataset.csv
 ```
 
 ---
@@ -137,19 +138,30 @@ payments.csv
 ## 5. Architecture
 
 ```text
-CSV Files
+CSV Dataset
 
 ↓
 
-Raw Layer
+Bronze Layer
 
-Parquet
+Raw Parquet
+(no transformations)
 
 ↓
 
-Curated Layer
+Silver Layer
 
-Dimension + Fact Tables
+Cleaned Data
+Standardized Types
+Validated Records
+
+↓
+
+Gold Layer
+
+Business Metrics
+Dimension Tables
+Fact Tables
 
 ↓
 
@@ -220,7 +232,59 @@ Merge to main
 
 ---
 
-## 7. Sprint Tracker
+## 7. Current Folder Structure
+
+```text
+src/main/java/com/anand/retail
+
+├── config
+
+│   └── ConfigLoader
+
+├── constants
+
+│   ├── DatasetConstants
+
+│   └── LakehouseTable
+
+├── factory
+
+│   └── SparkSessionFactory
+
+├── main
+
+│   ├── HelloSparkJob
+
+│   ├── CustomerBronzeJob
+
+│   └── OrderBronzeJob
+
+├── reader
+
+│   ├── CustomerReader
+
+│   └── OrderReader
+
+├── schema
+
+│   ├── CustomerSchema
+
+│   └── OrderSchema
+
+├── service
+
+│   ├── CustomerService
+
+│   └── OrderService
+
+└── writer
+
+    └── BronzeWriter
+```
+
+---
+
+## 8. Sprint Tracker
 
 ### Sprint 0
 
@@ -259,7 +323,7 @@ Establish project foundation:
 **Status:**
 
 ```text
-IN PROGRESS
+DONE
 ```
 
 **Stories:**
@@ -274,48 +338,126 @@ DONE
 
 US002
 
-SparkSessionFactory
+Spark Foundation
 
-TODO
+Implemented:
+
+- SparkSessionFactory
+
+- ConfigLoader
+
+- application.properties
+
+DONE
 
 
 US003
 
-Config Loader
+Merged into US002
 
-TODO
+CLOSED
 
 
 US004
 
-HelloSparkJob
+Hello Spark Job
 
-TODO
+Implemented:
+
+- DatasetConstants
+
+- CustomerReader
+
+- HelloSparkJob
+
+- CustomerReaderTest
+
+Features:
+
+- Read customer CSV
+
+- Print Schema
+
+- Show sample records
+
+- Count records
+
+- Logging
+
+DONE
 ```
 
 ---
 
 ### Sprint 2
 
+**Goal:**
+
+```
+Bronze Layer Ingestion
+```
+
+**Status:**
+
+```text
+IN PROGRESS
+```
+
+**Stories:**
+
 ```text
 US005
 
-Customer Ingestion
+Customer Bronze Ingestion
+
+Status : DONE
+
+Implemented:
+
+- CustomerSchema
+
+- CustomerReader
+
+- CustomerReaderTest
+
+- CustomerBronzeJob
+
+- BronzeWriter.writeTable(CUSTOMERS)
+
+- External dataset config
 
 
 US006
 
-Order Ingestion
+Order Bronze Ingestion
+
+Status : IN PROGRESS
+
+Implemented:
+
+- OrderSchema
+
+- OrderReader
+
+- OrderService
+
+- OrderBronzeJob
+
+- BronzeWriter.writeTable(ORDERS)
 
 
 US007
 
-Product Ingestion
+Product Bronze Ingestion
+
+Status : TODO
 
 
 US008
 
-Payment Ingestion
+Payment Bronze Ingestion
+
+Status : TODO
 ```
 
 ---
@@ -385,171 +527,70 @@ Monitoring
 
 ---
 
-## 8. Important Design Decisions
+## 9. Important Design Decisions
 
-| Decision                  |   Status | Reason                  |
-| ------------------------- | -------: | ----------------------- |
-| Datasets outside repo     | Accepted | Keep repo lightweight   |
-| Environment-based storage | Accepted | Mimics dev/qa/prod      |
-| Gradle build              | Accepted | Industry usage          |
-| Spark Java                | Accepted | Matches BDE role        |
-| Spring Boot               | Rejected | Not needed for ETL      |
-| Hive later                | Accepted | Incremental development |
-| Impala optional           | Accepted | Not necessary locally   |
-
----
-
-# Next Immediate Step
-
-Before writing the first Java class, I think the next order of work should be:
-
-### Step 1
-
-Create GitHub repository
+| Decision                      |   Status | Reason                          |
+| ----------------------------- | -------: | ------------------------------- |
+| Datasets outside repo         | Accepted | Keep repo lightweight           |
+| Environment-based storage     | Accepted | Mimics dev/qa/prod              |
+| Gradle build                  | Accepted | Industry usage                  |
+| Spark Java                    | Accepted | Matches BDE role                |
+| Spring Boot                   | Rejected | Not needed for ETL              |
+| Hive later                    | Accepted | Incremental development         |
+| Impala optional               | Accepted | Not necessary locally           |
+| Externalized configuration    | Accepted | No hardcoded values             |
+| Explicit Spark schemas        | Accepted | Faster startup, predictable types |
+| Centralized BronzeWriter      | Accepted | Reusable, single storage point  |
 
 ---
 
-### Step 2
-
-Create:
+## Current Status
 
 ```text
-PROJECT_SUMMARY.md
-```
-
-and
-
-```text
-README.md
-```
-
----
-
-### Step 3
-
-Push:
-
-```text
-feature/us001-project-bootstrap
-```
-
-to GitHub.
-
----
-
-### Step 4
-
-Create:
-
-```text
-US002
-
-SparkSessionFactory
-```
-
-and start actual coding.
-
-This keeps the project aligned with the same process from beginning to end and ensures we always have a clear roadmap, current status, and rationale for every design choice.
-
-
-## Current Sprint
-
-Sprint 1
-
-**Goal**
-
-Establish project foundation:
-
-- Gradle Build
-- Spark Dependencies
-- Logging
-- Config Management
-- SparkSessionFactory
-- HelloSparkJob
-
-
-## Current Branch
+Current Branch
 
 main
 
-Latest Release
-
-Not Released
 
 Build Status
 
 BUILD SUCCESSFUL
 
+
+Current Sprint
+
+Sprint 2
+
+
+Current User Story
+
+US006
+
+Order Bronze Ingestion
+
+
 Next User Story
 
-US002 : SparkSessionFactory
+US007
+
+Product Bronze Ingestion
+```
 
 ---
 
-## Sprint 1
-
-### US001
-
-Project Bootstrap
-
-Status : DONE
-
-
-### US002
-
-Spark Foundation
-
-Implemented:
-
-- SparkSessionFactory
-
-- ConfigLoader
-
-- application.properties
-
-Status : DONE
-
-
-### US003
-
-Merged into US002
-
-Status : CLOSED
-
-
-### US004
-
-Hello Spark Job
-
-Implemented:
-
-- DatasetConstants
-
-- CustomerReader
-
-- HelloSparkJob
-
-- CustomerReaderTest
-
-Features:
-
-- Read customer CSV
-
-- Print Schema
-
-- Show sample records
-
-- Count records
-
-- Logging
-
-Status : DONE
-
 # Revision History
 
-| Date       | Change                             |
-| ---------- | ---------------------------------- |
-| 2026-06-17 | Initial Project Summary created    |
+| Date       | Change                                              |
+| ---------- | --------------------------------------------------- |
+| 2026-06-17 | Initial Project Summary created                     |
+| 2026-06-23 | Updated repository structure to Bronze/Silver/Gold  |
+| 2026-06-23 | Updated external dataset path to olist_ecom_dataset |
+| 2026-06-23 | Updated architecture section to medallion layers    |
+| 2026-06-23 | Sprint 1 marked DONE                                |
+| 2026-06-23 | Sprint 2 user stories added with current statuses   |
+| 2026-06-23 | Added Current Folder Structure section              |
+| 2026-06-23 | Updated Current Status to Sprint 2 / US006          |
+| 2026-06-23 | Added new design decisions to decision table        |
 
 
 ---

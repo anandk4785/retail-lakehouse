@@ -1,6 +1,6 @@
 package com.anand.retail.service;
 
-import com.anand.retail.reader.ProductReader;
+import com.anand.retail.reader.PaymentReader;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -11,13 +11,15 @@ import org.apache.spark.sql.types.StructType;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-public class ProductServiceTest {
+public class PaymentServiceTest {
 
     private static SparkSession spark;
 
@@ -25,7 +27,7 @@ public class ProductServiceTest {
     static void setup() {
         spark = SparkSession
                 .builder()
-                .appName("ProductServiceTest")
+                .appName("PaymentServiceTest")
                 .master("local[1]")
                 .config("spark.ui.enabled", "false")
                 .getOrCreate();
@@ -39,31 +41,37 @@ public class ProductServiceTest {
     }
 
     @Test
-    void testLoadAndShowProductsLogsOutput() {
+    void testLoadAndShowPaymentsLogsOutput() {
+        Logger logger = LoggerFactory.getLogger(PaymentServiceTest.class);
+
         try {
-            ProductReader productReader = new ProductReader();
-            ProductService productService = new ProductService(productReader);
+            final PaymentReader paymentReader = new PaymentReader();
+            final PaymentService paymentService =
+                    new PaymentService(paymentReader);
+            Dataset<Row> resultDf = paymentService.loadAndShowPayments(spark);
 
-            Dataset<Row> productDf = productService.loadAndShowProducts(spark);
-
-            assertNotNull(productDf, "Result Dataframe should not be null");
-            assertTrue(productDf.columns().length > 0, "Result Dataframe should have columns");
+            assertNotNull(resultDf, "Result dataframe should not be null");
+            assertTrue(
+                    resultDf.columns().length > 0,
+                    "Result dataframe should have columns"
+            );
         } catch (Exception e) {
-            fail("Service method should not throw exception : " + e.getMessage());
+            fail("Service method should not throw exception: " + e.getMessage());
         }
+
     }
 
     @Test
     void testManualDataFrameProcessing() {
         StructType schema = DataTypes.createStructType(new StructField[]{
-                DataTypes.createStructField("product_id", DataTypes.StringType, false),
-                DataTypes.createStructField("product_category_name", DataTypes.StringType, true),
-                DataTypes.createStructField("product_name_lenght", DataTypes.IntegerType, true),
+                DataTypes.createStructField("order_id", DataTypes.StringType, true),
+                DataTypes.createStructField("payment_type", DataTypes.StringType, true),
+                DataTypes.createStructField("payment_value", DataTypes.DoubleType, true)
         });
 
         List<Row> rows = Arrays.asList(
-                RowFactory.create("P001", "Category1", 10),
-                RowFactory.create("P002", "Category2", 15)
+                RowFactory.create("1", "credit_card", 100.0),
+                RowFactory.create("2", "cash", 50.0)
         );
 
         Dataset<Row> testDf = spark.createDataFrame(rows, schema);

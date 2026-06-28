@@ -525,6 +525,10 @@ All CSV readers will define schemas explicitly using dedicated schema classes:
 CustomerSchema.getSchema();
 
 OrderSchema.getSchema();
+
+ProductSchema.getSchema();
+
+PaymentSchema.getSchema();
 ```
 
 Instead of:
@@ -540,7 +544,11 @@ com.anand.retail.schema
 
 ├── CustomerSchema
 
-└── OrderSchema
+├── OrderSchema
+
+├── ProductSchema
+
+└── PaymentSchema
 ```
 
 ## Reason
@@ -571,6 +579,10 @@ All Bronze layer writes are routed through a single class:
 BronzeWriter.writeTable(df, LakehouseTable.CUSTOMERS)
 
 BronzeWriter.writeTable(df, LakehouseTable.ORDERS)
+
+BronzeWriter.writeTable(df, LakehouseTable.PRODUCTS)
+
+BronzeWriter.writeTable(df, LakehouseTable.PAYMENTS)
 ```
 
 The destination path is resolved automatically using the `LakehouseTable` enum:
@@ -594,6 +606,58 @@ Paths.get(bronzePath, table.getDirectoryName())
 - Clean separation between job orchestration and storage concerns
 
 ---
+
+# ADR-014 : Dependency Injection and Service Layer
+
+## Status: Accepted ✅
+
+## Decision
+
+Shifted from a static Helper pattern (`CustomerJobHelper.loadAndShowCustomers`) to a true Service Layer with Dependency Injection (`OrderService`, `ProductService`).
+
+```java
+// Dependency Injection: Service demands the Reader
+OrderReader reader = new OrderReader();
+OrderService service = new OrderService(reader);
+```
+
+## Reason
+
+- Follows standard Java/Spring enterprise patterns natively
+- Enforces the Single Responsibility Principle
+- Separates orchestration (`Main`), I/O logic (`Reader/Writer`), and business preview/count logic (`Service`)
+- Highly testable — the `Reader` can be mocked when unit testing the `Service`
+
+## Consequences
+
+- Slightly more boilerplate in `main` methods to wire dependencies together (Assembly Line pattern)
+- Highly modular and testable code
+
+---
+
+# ADR-015 : Serializable Service Classes
+
+## Status: Accepted ✅
+
+## Decision
+
+All Spark Service classes must explicitly implement `java.io.Serializable`.
+
+```java
+public class OrderService implements Serializable { ... }
+
+public class ProductService implements Serializable { ... }
+```
+
+## Reason
+
+- When Spark executes actions/transformations using class methods, the JVM attempts to serialize the entire enclosing object to send it to executor nodes
+- If the class is not `Serializable`, Spark throws a fatal `NotSerializableException` (Serialization Leak)
+- Explicit implementation guarantees cluster compatibility from day one
+
+## Consequences
+
+- All instance variables within the Service (e.g. Loggers, Readers) must be either `static`, `transient`, or themselves `Serializable`
 
 # Future Architecture Decisions
 
@@ -682,6 +746,10 @@ Dashboards
 | 2026-06-23 | Added ADR-011 : Externalized Configuration                |
 | 2026-06-23 | Added ADR-012 : Explicit Spark Schemas                    |
 | 2026-06-23 | Added ADR-013 : Centralized Bronze Writer                 |
+| 2026-06-27 | Added ADR-014 : Dependency Injection & Service Layer      |
+| 2026-06-27 | Added ADR-015 : Serializable Service Classes              |
+| 2026-06-28 | Updated ADR-012 schema list to include ProductSchema and PaymentSchema |
+| 2026-06-28 | Updated ADR-013 writeTable examples to include PRODUCTS and PAYMENTS  |
 
 
 ---

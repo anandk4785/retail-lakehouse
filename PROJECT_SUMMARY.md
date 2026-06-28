@@ -257,25 +257,41 @@ src/main/java/com/anand/retail
 
 │   ├── CustomerBronzeJob
 
-│   └── OrderBronzeJob
+│   ├── OrderBronzeJob
+
+│   ├── ProductBronzeJob
+
+│   └── PaymentBronzeJob
 
 ├── reader
 
 │   ├── CustomerReader
 
-│   └── OrderReader
+│   ├── OrderReader
+
+│   ├── ProductReader
+
+│   └── PaymentReader
 
 ├── schema
 
 │   ├── CustomerSchema
 
-│   └── OrderSchema
+│   ├── OrderSchema
+
+│   ├── ProductSchema
+
+│   └── PaymentSchema
 
 ├── service
 
 │   ├── CustomerService
 
-│   └── OrderService
+│   ├── OrderService
+
+│   ├── ProductService
+
+│   └── PaymentService
 
 └── writer
 
@@ -400,7 +416,7 @@ Bronze Layer Ingestion
 **Status:**
 
 ```text
-IN PROGRESS
+DONE
 ```
 
 **Stories:**
@@ -431,13 +447,15 @@ US006
 
 Order Bronze Ingestion
 
-Status : IN PROGRESS
+Status : DONE
 
 Implemented:
 
 - OrderSchema
 
 - OrderReader
+
+- OrderReaderTest
 
 - OrderService
 
@@ -450,14 +468,44 @@ US007
 
 Product Bronze Ingestion
 
-Status : TODO
+Status : DONE
+
+Implemented:
+
+- ProductSchema
+
+- ProductReader
+
+- ProductReaderTest
+
+- ProductService
+
+- ProductBronzeJob
+
+- BronzeWriter.writeTable(PRODUCTS)
 
 
 US008
 
 Payment Bronze Ingestion
 
-Status : TODO
+Status : DONE
+
+Implemented:
+
+- PaymentSchema
+
+- PaymentReader
+
+- PaymentReaderTest
+
+- PaymentService
+
+- PaymentServiceTest
+
+- PaymentBronzeJob
+
+- BronzeWriter.writeTable(PAYMENTS)
 ```
 
 ---
@@ -538,9 +586,11 @@ Monitoring
 | Spring Boot                   | Rejected | Not needed for ETL              |
 | Hive later                    | Accepted | Incremental development         |
 | Impala optional               | Accepted | Not necessary locally           |
-| Externalized configuration    | Accepted | No hardcoded values             |
+| Externalized configuration    | Accepted | No hardcoded values               |
 | Explicit Spark schemas        | Accepted | Faster startup, predictable types |
-| Centralized BronzeWriter      | Accepted | Reusable, single storage point  |
+| Centralized BronzeWriter      | Accepted | Reusable, single storage point    |
+| Dependency Injection / Service Layer | Accepted | Testable, SRP-compliant    |
+| Serializable Service classes  | Accepted | Prevents Spark serialization leaks |
 
 ---
 
@@ -559,21 +609,21 @@ BUILD SUCCESSFUL
 
 Current Sprint
 
-Sprint 2
+Sprint 3
 
 
 Current User Story
 
-US006
+US009
 
-Order Bronze Ingestion
+Customer Dimension
 
 
 Next User Story
 
-US007
+US010
 
-Product Bronze Ingestion
+Product Dimension
 ```
 
 ---
@@ -589,8 +639,17 @@ Product Bronze Ingestion
 | 2026-06-23 | Sprint 1 marked DONE                                |
 | 2026-06-23 | Sprint 2 user stories added with current statuses   |
 | 2026-06-23 | Added Current Folder Structure section              |
-| 2026-06-23 | Updated Current Status to Sprint 2 / US006          |
-| 2026-06-23 | Added new design decisions to decision table        |
+| 2026-06-23 | Updated Current Status to Sprint 2 / US006                  |
+| 2026-06-23 | Added new design decisions to decision table                |
+| 2026-06-27 | US006 Order Bronze Ingestion marked DONE                    |
+| 2026-06-27 | US007 Product Bronze Ingestion marked DONE                  |
+| 2026-06-27 | Added Product* classes to Current Folder Structure          |
+| 2026-06-27 | Updated Current Status to US008 / Next US009                |
+| 2026-06-27 | Added DI & Serializable decisions to design decisions table |
+| 2026-06-28 | US008 Payment Bronze Ingestion marked DONE                  |
+| 2026-06-28 | Sprint 2 marked DONE                                        |
+| 2026-06-28 | Added Payment* classes to Current Folder Structure          |
+| 2026-06-28 | Advanced Current Status to Sprint 3 / US009                 |
 
 
 ---

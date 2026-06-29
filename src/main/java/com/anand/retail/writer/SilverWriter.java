@@ -13,6 +13,9 @@ import java.nio.file.Paths;
 public class SilverWriter {
     private static final Logger logger = LoggerFactory.getLogger(SilverWriter.class);
 
+    /**
+     * Universally writes any Dataset to the Silver layer as Parquet.
+     */
     public void writeTable(Dataset<Row> df, LakehouseTable table) {
 
         String silverPath = ConfigLoader.get("silver.path");

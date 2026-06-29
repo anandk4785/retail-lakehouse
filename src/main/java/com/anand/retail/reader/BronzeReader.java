@@ -14,14 +14,18 @@ public class BronzeReader {
 
     private static final Logger logger = LoggerFactory.getLogger(BronzeReader.class);
 
-    public Dataset<Row> readCustomers(SparkSession spark) {
-        logger.info("Reading customer dataset from bronze layer.");
+    /**
+     * Universally reads any Bronze Parquet table.
+     */
+    public Dataset<Row> readTable(SparkSession spark, LakehouseTable table) {
 
         String bronzeRoot = ConfigLoader.get("bronze.path");
         // Pass the directory name (String) instead of the enum constant itself.
         // Using getDirectoryName() returns the intended "customers" value
         // (String.valueOf(LakehouseTable.CUSTOMERS) would yield "CUSTOMERS").
-        String fullPath = Paths.get(bronzeRoot, LakehouseTable.CUSTOMERS.getDirectoryName()).toString();
+        String fullPath = Paths.get(bronzeRoot, table.getDirectoryName()).toString();
+
+        logger.info("Reading Bronze Table [{}] from path: {}", table.name(), fullPath);
 
         return spark.read().parquet(fullPath);
     }

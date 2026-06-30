@@ -23,8 +23,6 @@ public class CustomerTransformer {
         logger.info("Applying Silver transformations for Customer Dimension");
 
         return customerDf
-                .dropDuplicates("customer_id")
-                .filter(col("customer_id").isNotNull())
                 .withColumn("customer_state", upper(trim(col("customer_state"))))
                 .withColumn("customer_city", initcap(trim(col("customer_city"))));
     }

@@ -648,7 +648,6 @@ public class OrderService implements Serializable { ... }
 
 public class ProductService implements Serializable { ... }
 ```
-
 ## Reason
 
 - When Spark executes actions/transformations using class methods, the JVM attempts to serialize the entire enclosing object to send it to executor nodes
@@ -658,6 +657,47 @@ public class ProductService implements Serializable { ... }
 ## Consequences
 
 - All instance variables within the Service (e.g. Loggers, Readers) must be either `static`, `transient`, or themselves `Serializable`
+
+---
+
+# ADR-016 : Universal Parquet Readers and Writers
+
+## Status: Accepted ✅
+
+## Decision
+
+Silver/Gold layers will use generic, stateless IO utilities (`BronzeReader`, `SilverWriter`) 
+that read and write directly to Parquet using the `LakehouseTable` enum.
+
+## Reason
+
+- Parquet files embed their own schema, eliminating the need for entity-specific readers (like `CustomerReader` for CSVs).
+
+- Drastically reduces boilerplate code in transformation layers.
+
+- Forces all tables to comply strictly with the central `LakehouseTable` registry.
+
+---
+
+# ADR-017 : Validator Pattern (Data Quality Separation)
+
+# Status: Accepted ✅
+
+# Decision
+
+Data cleansing (null checks, deduplication) is explicitly separated from data formatting (casting, string manipulation) using a dedicated `Validator` class.
+
+```Plaintext
+Raw Data → Validator (drops invalid rows) → Transformer (formats rows)
+```
+
+# Reason
+
+- Strict adherence to the Single Responsibility Principle (SRP).
+
+- Enhances observability: Services can count records before and after validation to log exactly how many dirty records were dropped.
+
+- Makes unit tests highly focused.
 
 # Future Architecture Decisions
 
@@ -684,7 +724,7 @@ CSV
 
 ↓
 
-Reader
+Specific Reader (Explicit Schema)
 
 ↓
 
@@ -702,17 +742,21 @@ Parquet
 ```
 Bronze Parquet
 
-↓
+↓ 
 
-Validated Data
-
-↓
-
-Transformations
+Universal Reader
 
 ↓
 
-Partitioned Parquet
+Validator
+
+↓
+
+Transformer
+
+↓
+
+Universal Parquet Writer
 ```
 
 ### Gold
@@ -750,6 +794,7 @@ Dashboards
 | 2026-06-27 | Added ADR-015 : Serializable Service Classes              |
 | 2026-06-28 | Updated ADR-012 schema list to include ProductSchema and PaymentSchema |
 | 2026-06-28 | Updated ADR-013 writeTable examples to include PRODUCTS and PAYMENTS  |
-
+| 2026-07-01 | Added ADR-016 : Universal Parquet Readers and Writers     |
+| 2026-07-01 | Added ADR-017 : Validator Pattern (Data Quality Separation) |
 
 ---

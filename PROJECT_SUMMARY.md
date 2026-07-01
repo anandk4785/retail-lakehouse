@@ -208,6 +208,8 @@ feature/us003-config-loader
 feature/us004-hello-spark-job
 
 feature/us005-customer-ingestion
+
+feature/us009-customer-silver-dimension
 ```
 
 ---
@@ -227,8 +229,14 @@ Self Review
 
 ↓
 
-Merge to main
+Squash & Merge to main
 ```
+
+Each story is developed on its own feature branch with multiple small,
+scoped local commits (implementation, DI refactor, tests, docs). The PR is
+squash-merged into `main`, so `main` history stays one clean commit per
+story, while the full commit-by-commit history remains traceable on the
+feature branch and inside the PR itself.
 
 ---
 
@@ -261,7 +269,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductBronzeJob
 
-│   └── PaymentBronzeJob
+│   ├── PaymentBronzeJob
+
+│   └── CustomerSilverJob
 
 ├── reader
 
@@ -271,7 +281,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductReader
 
-│   └── PaymentReader
+│   ├── PaymentReader
+
+│   └── BronzeReader
 
 ├── schema
 
@@ -291,11 +303,72 @@ src/main/java/com/anand/retail
 
 │   ├── ProductService
 
-│   └── PaymentService
+│   ├── PaymentService
+
+│   └── CustomerSilverService
+
+├── transform
+
+│   └── CustomerTransformer
+
+├── validator
+
+│   └── CustomerValidator
 
 └── writer
 
-    └── BronzeWriter
+    ├── BronzeWriter
+
+    └── SilverWriter
+
+
+src/test/java/com/anand/retail
+
+├── config
+
+│   └── ConfigLoaderTest
+
+├── factory
+
+│   └── SparkSessionFactoryTest
+
+├── reader
+
+│   ├── CustomerReaderTest
+
+│   ├── OrderReaderTest
+
+│   ├── ProductReaderTest
+
+│   ├── PaymentReaderTest
+
+│   └── BronzeReaderTest
+
+├── service
+
+│   ├── CustomerServiceTest
+
+│   ├── OrderServiceTest
+
+│   ├── ProductServiceTest
+
+│   ├── PaymentServiceTest
+
+│   └── CustomerSilverServiceTest
+
+├── transform
+
+│   └── CustomerTransformerTest
+
+├── validator
+
+│   └── CustomerValidatorTest
+
+└── writer
+
+    ├── BronzeWriterTest
+
+    └── SilverWriterTest
 ```
 
 ---
@@ -515,7 +588,36 @@ Implemented:
 ```text
 US009
 
-Customer Dimension
+Customer Silver Dimension
+
+Status : DONE
+
+Implemented:
+
+- BronzeReader (generic Bronze reader, resolves path via LakehouseTable)
+
+- CustomerValidator (null PK removal + dedup on customer_id)
+
+- CustomerTransformer (standardizes customer_city / customer_state)
+
+- SilverWriter (generic Silver writer, resolves path via LakehouseTable)
+
+- CustomerSilverService (DI-based orchestration, Serializable)
+
+- CustomerSilverJob (assembly-line main class)
+
+- BronzeReaderTest, CustomerValidatorTest, CustomerTransformerTest,
+  SilverWriterTest, CustomerSilverServiceTest
+
+- BronzeWriterTest updated to resolve paths via ConfigLoader (consistency
+  with ADR-016)
+
+Design notes:
+
+- CustomerValidator and CustomerTransformer responsibilities were split
+  cleanly: validation (null PK / dedup) is now solely owned by
+  CustomerValidator; CustomerTransformer only standardizes already-valid
+  data. See ADR-016.
 
 
 US010
@@ -591,6 +693,8 @@ Monitoring
 | Centralized BronzeWriter      | Accepted | Reusable, single storage point    |
 | Dependency Injection / Service Layer | Accepted | Testable, SRP-compliant    |
 | Serializable Service classes  | Accepted | Prevents Spark serialization leaks |
+| Validator/Transformer responsibility split | Accepted | Single owner for null/dedup handling, clearer pipeline contract |
+| Test paths resolved via ConfigLoader | Accepted | Tests and production code share one source of truth for paths |
 
 ---
 
@@ -614,16 +718,16 @@ Sprint 3
 
 Current User Story
 
-US009
+US010
 
-Customer Dimension
+Product Dimension
 
 
 Next User Story
 
-US010
+US011
 
-Product Dimension
+Order Fact
 ```
 
 ---
@@ -650,6 +754,11 @@ Product Dimension
 | 2026-06-28 | Sprint 2 marked DONE                                        |
 | 2026-06-28 | Added Payment* classes to Current Folder Structure          |
 | 2026-06-28 | Advanced Current Status to Sprint 3 / US009                 |
-
+| 2026-07-01 | US009 Customer Silver Dimension marked DONE                 |
+| 2026-07-01 | Added Silver-layer classes (reader/validator/transform/writer/service/main) to Current Folder Structure |
+| 2026-07-01 | Added full src/test folder tree to Current Folder Structure |
+| 2026-07-01 | Added Validator/Transformer split and test-path decisions to design decisions table |
+| 2026-07-01 | Advanced Current Status to Sprint 3 / US010, Next US011     |
+| 2026-07-01 | Documented squash-and-merge PR workflow in Git Workflow section |
 
 ---

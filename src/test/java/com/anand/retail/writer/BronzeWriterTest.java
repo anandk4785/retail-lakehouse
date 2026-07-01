@@ -1,5 +1,6 @@
 package com.anand.retail.writer;
 
+import com.anand.retail.config.ConfigLoader;
 import com.anand.retail.constants.LakehouseTable;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -22,8 +23,14 @@ import static org.junit.jupiter.api.Assertions.*;
 public class BronzeWriterTest {
 
     private static SparkSession spark;
-    private static final String BRONZE_CUSTOMERS_PATH = "./data/test/bronze/customers";
-    private static final String BRONZE_ORDERS_PATH = "./data/test/bronze/orders";
+    private static final String BRONZE_CUSTOMERS_PATH = Paths.get(
+            ConfigLoader.get("bronze.path"),
+            LakehouseTable.CUSTOMERS.getDirectoryName()
+    ).toString();
+    private static final String BRONZE_ORDERS_PATH = Paths.get(
+            ConfigLoader.get("bronze.path"),
+            LakehouseTable.ORDERS.getDirectoryName()
+    ).toString();
 
     @BeforeAll
     static void setup() {

@@ -1,6 +1,5 @@
 package com.anand.retail.validator;
 
-import com.anand.retail.factory.SparkSessionFactory;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -23,7 +22,13 @@ public class CustomerValidatorTest {
 
     @BeforeAll
     static void setup() {
-        spark = SparkSessionFactory.getSparkSession();
+        spark = SparkSession
+                .builder()
+                .appName("CustomerValidatorTest")
+                .master("local[1]")
+                .config("spark.ui.enabled", "false")
+                .getOrCreate();
+
         validator = new CustomerValidator();
     }
 

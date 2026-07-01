@@ -1,6 +1,5 @@
 package com.anand.retail.transform;
 
-import com.anand.retail.factory.SparkSessionFactory;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
 import org.apache.spark.sql.RowFactory;
@@ -11,7 +10,6 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.util.Arrays;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -23,7 +21,13 @@ public class CustomerTransformerTest {
 
     @BeforeAll
     static void setup() {
-        spark = SparkSessionFactory.getSparkSession();
+        spark = SparkSession
+                .builder()
+                .appName("CustomerTransformerTest")
+                .master("local[1]")
+                .config("spark.ui.enabled", "false")
+                .getOrCreate();
+
         transformer = new CustomerTransformer();
     }
 

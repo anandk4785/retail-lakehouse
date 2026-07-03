@@ -11,7 +11,9 @@ import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class ProductSilverService {
+import java.io.Serializable;
+
+public class ProductSilverService implements Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(ProductSilverService.class);
 
@@ -39,11 +41,11 @@ public class ProductSilverService {
         long inputCount = rawDf.count();
         logger.info("Input Count: {}", inputCount);
 
-        Dataset<Row> valiDf = validator.validate(rawDf);
-        long validCount = valiDf.count();
+        Dataset<Row> validDf = validator.validate(rawDf);
+        long validCount = validDf.count();
         logger.info("Invalid/Duplicate records removed: {}", (inputCount - validCount));
 
-        Dataset<Row> silverDf = transformer.transform(valiDf);
+        Dataset<Row> silverDf = transformer.transform(validDf);
         long outputCount = silverDf.count();
         logger.info("Output records count: {}", outputCount);
 

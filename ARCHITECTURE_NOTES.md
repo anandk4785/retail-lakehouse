@@ -666,7 +666,7 @@ public class ProductService implements Serializable { ... }
 
 ## Decision
 
-Silver/Gold layers will use generic, stateless IO utilities (`BronzeReader`, `SilverWriter`) 
+Silver/Gold layers will use generic, stateless IO utilities (`BronzeReader`, `SilverWriter`)
 that read and write directly to Parquet using the `LakehouseTable` enum.
 
 ## Reason
@@ -698,6 +698,84 @@ Raw Data → Validator (drops invalid rows) → Transformer (formats rows)
 - Enhances observability: Services can count records before and after validation to log exactly how many dirty records were dropped.
 
 - Makes unit tests highly focused.
+
+---
+
+# ADR-018 : Intentional Duplication Across Silver Dimensions (US-010 to US-012), Deferred to US-013
+
+## Status: Accepted ✅
+
+## Context
+
+With US-009 (Customer Silver Dimension) complete, the pattern
+`BronzeReader` → `Validator` → `Transformer` → `SilverWriter`, orchestrated
+by an entity-specific, DI-based `Service` class, is proven for one entity.
+US-010 (Product), US-011 (Order Fact), and US-012 (Payment Fact) each need
+the same shape.
+
+Two options were considered:
+
+1. Generalize immediately — introduce `DataValidator` / `DataTransformer`
+   interfaces and a single configurable generic Service class before
+   writing Product/Order/Payment code, inferring the abstraction from one
+   real example (Customer).
+2. Duplicate the Customer pattern per entity (`ProductValidator`,
+   `ProductTransformer`, `ProductSilverService`, `ProductSilverJob`, etc.),
+   accept the resulting near-identical classes, and generalize later once
+   multiple real examples exist.
+
+## Decision
+
+Option 2. `ProductValidator`, `ProductTransformer`, `ProductSilverService`,
+and `ProductSilverJob` (US-010) intentionally duplicate the structure of
+their Customer counterparts, rather than introducing shared interfaces or
+a generic service at this point. The same approach will be used for US-011
+(Order Fact) and US-012 (Payment Fact).
+
+A dedicated **US-013 : Technical Debt / Refactoring** story is scheduled
+once Customer, Product, Order, and Payment Silver pipelines all exist, to
+consolidate the now-proven duplication behind `DataValidator` /
+`DataTransformer` interfaces and a single generic, DI-driven Silver
+service.
+
+## Reason
+
+- Generalizing from a single example (Customer alone) risks guessing at an
+  abstraction that doesn't actually fit once a second or third real case
+  (Product's non-PK null-fill transform, Order/Payment's fact-table shape)
+  is written — premature abstraction is itself a design smell.
+- Deliberately allowing duplication to accumulate across three more
+  entities, then refactoring against four real, tested examples, produces
+  a more defensible generalization and a clear, demonstrable before/after
+  story — closer to how real teams manage technical debt against sprint
+  deadlines.
+- Framing the consolidation as its own user story (US-013) keeps it
+  visible and prioritized on the sprint tracker rather than being silently
+  deferred indefinitely.
+
+## Consequences
+
+- `ProductValidator` / `OrderValidator` / `PaymentValidator` and their
+  `Transformer` counterparts will contain near-identical null-PK/dedup
+  logic until US-013.
+- `ProductSilverService` (and its Order/Payment equivalents) duplicate the
+  orchestration shape of `CustomerSilverService` almost line for line.
+- US-013 is expected to: introduce `DataValidator` / `DataTransformer`
+  interfaces, a generic configurable validator for null-PK/dedup handling,
+  and a single generic Silver service replacing all four per-entity
+  services — retiring the entity-specific `Validator` / `Service` classes
+  in favor of DI-configured generic ones. Entity-specific `Transformer`
+  classes are expected to remain, since standardization logic differs
+  meaningfully per entity (see ADR-017).
+- US-013 is reserved for this Technical Debt / Refactoring story. Since
+  the Kanban board only has issues created through US-012, the previously
+  planned US-013 (Hive Metastore) and later Sprint 4/5 stories shift up by
+  one: Hive Metastore → US-014, Sales Analytics → US-015, Top Customers
+  Report → US-016, Airflow DAG → US-017, Daily ETL Pipeline → US-018,
+  Monitoring → US-019. See `PROJECT_SUMMARY.md` Sprint 3–5 for the
+  current numbering.
+
+---
 
 # Future Architecture Decisions
 
@@ -796,5 +874,6 @@ Dashboards
 | 2026-06-28 | Updated ADR-013 writeTable examples to include PRODUCTS and PAYMENTS  |
 | 2026-07-01 | Added ADR-016 : Universal Parquet Readers and Writers     |
 | 2026-07-01 | Added ADR-017 : Validator Pattern (Data Quality Separation) |
+| 2026-07-02 | Added ADR-018 : Intentional Duplication Across Silver Dimensions, Deferred to US-013 |
 
 ---

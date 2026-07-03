@@ -210,6 +210,10 @@ feature/us004-hello-spark-job
 feature/us005-customer-ingestion
 
 feature/us009-customer-silver-dimension
+
+feature/us010-product-silver-dimension
+
+feature/us013-technical-debt-refactoring
 ```
 
 ---
@@ -271,7 +275,9 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentBronzeJob
 
-│   └── CustomerSilverJob
+│   ├── CustomerSilverJob
+
+│   └── ProductSilverJob
 
 ├── reader
 
@@ -305,15 +311,21 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentService
 
-│   └── CustomerSilverService
+│   ├── CustomerSilverService
+
+│   └── ProductSilverService
 
 ├── transform
 
-│   └── CustomerTransformer
+│   ├── CustomerTransformer
+
+│   └── ProductTransformer
 
 ├── validator
 
-│   └── CustomerValidator
+│   ├── CustomerValidator
+
+│   └── ProductValidator
 
 └── writer
 
@@ -358,11 +370,15 @@ src/test/java/com/anand/retail
 
 ├── transform
 
-│   └── CustomerTransformerTest
+│   ├── CustomerTransformerTest
+
+│   └── ProductTransformerTest
 
 ├── validator
 
-│   └── CustomerValidatorTest
+│   ├── CustomerValidatorTest
+
+│   └── ProductValidatorTest
 
 └── writer
 
@@ -617,12 +633,40 @@ Design notes:
 - CustomerValidator and CustomerTransformer responsibilities were split
   cleanly: validation (null PK / dedup) is now solely owned by
   CustomerValidator; CustomerTransformer only standardizes already-valid
-  data. See ADR-016.
+  data. See ADR-017.
 
 
 US010
 
-Product Dimension
+Product Silver Dimension
+
+Status : DONE
+
+Implemented:
+
+- ProductValidator (null PK removal + dedup on product_id — mirrors
+  CustomerValidator)
+
+- ProductTransformer (fills null product_category_name with "Unknown")
+
+- ProductSilverService (DI-based orchestration, Serializable)
+
+- ProductSilverJob (assembly-line main class)
+
+- ProductValidatorTest, ProductTransformerTest
+
+Design notes:
+
+- Intentionally duplicates the US-009 Customer pipeline structure rather
+  than generalizing behind shared interfaces at this point. See ADR-018.
+  Consolidation is scheduled as its own story, US-013 (Technical Debt /
+  Refactoring), once Order and Payment Silver pipelines also exist.
+
+- Code review caught two inconsistencies with established ADRs during
+  implementation, both corrected before merge: ProductSilverService was
+  missing `implements Serializable` (required by ADR-015), and a local
+  variable was renamed from `valiDf` to `validDf` for consistency with
+  CustomerSilverService.
 
 
 US011
@@ -633,24 +677,56 @@ Order Fact
 US012
 
 Payment Fact
+
+
+US013
+
+Technical Debt / Refactoring
+
+Consolidates the intentional duplication introduced across US-010
+(Product), US-011 (Order Fact), and US-012 (Payment Fact) — see ADR-018.
+
+Planned scope:
+
+- Introduce DataValidator / DataTransformer interfaces
+
+- Introduce a generic, configurable validator for null-PK/dedup handling
+  (replacing CustomerValidator, ProductValidator, OrderValidator,
+  PaymentValidator)
+
+- Introduce a single generic, DI-driven Silver service (replacing
+  CustomerSilverService, ProductSilverService, and their Order/Payment
+  equivalents)
+
+- Retain entity-specific Transformer classes (standardization logic
+  differs meaningfully per entity — not a generalization candidate)
+
+- Update all *SilverJob classes to wire the generic service
+
+- Full regression pass: all existing Silver-layer tests must continue to
+  pass unchanged in behavior after the refactor
 ```
+
+Matches the Kanban board 1:1 — issues are currently tracked through
+US-012 only; Sprint 4 and Sprint 5 stories below exist in this document
+as forward planning and have not yet been created as board issues.
 
 ---
 
 ### Sprint 4
 
 ```text
-US013
+US014
 
 Hive Metastore
 
 
-US014
+US015
 
 Sales Analytics
 
 
-US015
+US016
 
 Top Customers Report
 ```
@@ -660,17 +736,17 @@ Top Customers Report
 ### Sprint 5
 
 ```text
-US016
+US017
 
 Airflow DAG
 
 
-US017
+US018
 
 Daily ETL Pipeline
 
 
-US018
+US019
 
 Monitoring
 ```
@@ -695,6 +771,8 @@ Monitoring
 | Serializable Service classes  | Accepted | Prevents Spark serialization leaks |
 | Validator/Transformer responsibility split | Accepted | Single owner for null/dedup handling, clearer pipeline contract |
 | Test paths resolved via ConfigLoader | Accepted | Tests and production code share one source of truth for paths |
+| Intentional per-entity duplication (US-010 to US-012), refactor in US-013 (Technical Debt / Refactoring) | Accepted | Avoids premature abstraction from a single example; generalize against proven, tested cases |
+| Sprint 4/5 stories renumbered (US-013 reserved for Technical Debt) | Accepted | Kanban board only has issues through US-012; renumbering forward-planned stories in docs is cheap and keeps board/document numbering aligned before those issues are created |
 
 ---
 
@@ -708,7 +786,7 @@ main
 
 Build Status
 
-BUILD SUCCESSFUL
+BUILD SUCCESSFUL (pending final local re-run after Serializable/naming fixes — see US-010 notes)
 
 
 Current Sprint
@@ -718,16 +796,16 @@ Sprint 3
 
 Current User Story
 
-US010
+US011
 
-Product Dimension
+Order Fact
 
 
 Next User Story
 
-US011
+US012
 
-Order Fact
+Payment Fact
 ```
 
 ---
@@ -760,5 +838,13 @@ Order Fact
 | 2026-07-01 | Added Validator/Transformer split and test-path decisions to design decisions table |
 | 2026-07-01 | Advanced Current Status to Sprint 3 / US010, Next US011     |
 | 2026-07-01 | Documented squash-and-merge PR workflow in Git Workflow section |
+| 2026-07-02 | US010 Product Silver Dimension marked DONE                  |
+| 2026-07-02 | Added ProductValidator/ProductTransformer/ProductSilverService/ProductSilverJob and their tests to Current Folder Structure |
+| 2026-07-02 | Added intentional-duplication design decision to decision table (ADR-018) |
+| 2026-07-02 | Flagged Sprint 4 US-013 numbering collision with new Technical Debt story |
+| 2026-07-02 | Advanced Current Status to Sprint 3 / US011, Next US012     |
+| 2026-07-03 | Resolved US-013 numbering: US-013 is now Technical Debt / Refactoring; Sprint 4 renumbered US013→US014, US014→US015, US015→US016; Sprint 5 renumbered US016→US017, US017→US018, US018→US019 |
+| 2026-07-03 | Added US-013 Technical Debt / Refactoring story detail (planned scope) to Sprint 3 |
+| 2026-07-03 | Noted Kanban board currently only has issues through US-012; Sprint 4/5 remain document-only forward planning |
 
 ---

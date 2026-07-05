@@ -7,7 +7,9 @@ import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class PaymentService {
+import java.io.Serializable;
+
+public class PaymentService implements Serializable {
 
     private static final Logger logger =
             LoggerFactory.getLogger(

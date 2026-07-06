@@ -30,6 +30,11 @@ logs/
 .DS_Store
 
 
+# venv
+
+.venv/
+
+
 # Spark
 
 spark-warehouse/

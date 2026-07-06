@@ -213,6 +213,8 @@ feature/us009-customer-silver-dimension
 
 feature/us010-product-silver-dimension
 
+feature/us011-order-silver-fact
+
 feature/us013-technical-debt-refactoring
 ```
 
@@ -277,7 +279,9 @@ src/main/java/com/anand/retail
 
 │   ├── CustomerSilverJob
 
-│   └── ProductSilverJob
+│   ├── ProductSilverJob
+
+│   └── OrderSilverJob
 
 ├── reader
 
@@ -313,19 +317,25 @@ src/main/java/com/anand/retail
 
 │   ├── CustomerSilverService
 
-│   └── ProductSilverService
+│   ├── ProductSilverService
+
+│   └── OrderSilverService
 
 ├── transform
 
 │   ├── CustomerTransformer
 
-│   └── ProductTransformer
+│   ├── ProductTransformer
+
+│   └── OrderTransformer
 
 ├── validator
 
 │   ├── CustomerValidator
 
-│   └── ProductValidator
+│   ├── ProductValidator
+
+│   └── OrderValidator
 
 └── writer
 
@@ -372,13 +382,17 @@ src/test/java/com/anand/retail
 
 │   ├── CustomerTransformerTest
 
-│   └── ProductTransformerTest
+│   ├── ProductTransformerTest
+
+│   └── OrderTransformerTest
 
 ├── validator
 
 │   ├── CustomerValidatorTest
 
-│   └── ProductValidatorTest
+│   ├── ProductValidatorTest
+
+│   └── OrderValidatorTest
 
 └── writer
 
@@ -671,7 +685,70 @@ Design notes:
 
 US011
 
-Order Fact
+Order Silver Fact
+
+Status : DONE
+
+Implemented:
+
+- OrderValidator (null-check on order_id, customer_id, AND
+  order_purchase_timestamp — broader than Customer/Product's PK-only
+  check, since every derived metric in OrderTransformer depends on
+  order_purchase_timestamp being present; dedup on order_id)
+
+- OrderTransformer (date dimensions: purchase_date/purchase_year/
+  purchase_month/purchase_day; delivery metrics: delivery_days,
+  delivery_delay_days, approval_time_days, carrier_dispatch_days,
+  carrier_transit_days; is_delivered flag; renames *_timestamp/status
+  columns and drops original order_-prefixed names)
+
+- OrderSilverService (DI-based orchestration, Serializable, mirrors
+  CustomerSilverService/ProductSilverService exactly)
+
+- OrderSilverJob (assembly-line main class)
+
+- OrderValidatorTest, OrderTransformerTest (delivered-order case,
+  undelivered-order case verifying null downstream metrics, column
+  rename verification, row-count-preserved case)
+
+Design notes:
+
+- OrderTransformer's scope is intentionally broader than
+  CustomerTransformer/ProductTransformer: it derives business metrics
+  (date parts, day-count differences) rather than only standardizing
+  existing fields. This reflects Order being a Fact table (carries
+  measures) rather than a Dimension (carries descriptive attributes) —
+  same Validator/Transformer architectural split from ADR-017, but the
+  Transformer's natural scope differs by table type. See ADR-019.
+
+- OrderValidator's null-checks are scoped to every column the
+  Transformer's derived metrics actually depend on (order_purchase_
+  timestamp), not just the primary key — while intentionally leaving
+  order_approved_at / order_delivered_carrier_date / order_delivered_
+  customer_date / order_estimated_delivery_date unchecked, since a
+  legitimately in-flight (not yet delivered) order should keep nulls
+  there rather than being dropped.
+
+- Still intentionally duplicates the per-entity Validator/Service
+  pattern rather than generalizing — see ADR-018; consolidation remains
+  scoped to US-013.
+
+Review findings, fixed before merge:
+
+- `OrderTransformer` was changed from `functions.day(...)` to
+  `functions.dayofmonth(...)` during review, based on an incorrect claim
+  that `day()` doesn't exist in Spark 3.5.x's Java API. That claim was
+  wrong — `day(Column e)` is documented in the official Spark 3.5.6
+  Javadoc as a valid alias for `dayofmonth(Column e)`. The change is
+  harmless (both are equivalent) but wasn't actually necessary. See the
+  correction in ADR-019.
+
+- Two JUnit assertions (`assertTrue`/`assertFalse` on a Boolean column
+  read via `Row.getAs(String)`) failed to compile due to generic type
+  inference ambiguity between JUnit 5's `assertTrue(boolean)` and
+  `assertTrue(BooleanSupplier)` overloads. Fixed with an explicit
+  `(boolean)` cast, consistent with the `(int)` casts already used for
+  numeric columns elsewhere in the same test file. This finding holds.
 
 
 US012
@@ -773,6 +850,7 @@ Monitoring
 | Test paths resolved via ConfigLoader | Accepted | Tests and production code share one source of truth for paths |
 | Intentional per-entity duplication (US-010 to US-012), refactor in US-013 (Technical Debt / Refactoring) | Accepted | Avoids premature abstraction from a single example; generalize against proven, tested cases |
 | Sprint 4/5 stories renumbered (US-013 reserved for Technical Debt) | Accepted | Kanban board only has issues through US-012; renumbering forward-planned stories in docs is cheap and keeps board/document numbering aligned before those issues are created |
+| Fact-table Transformers derive metrics; Dimension Transformers only standardize | Accepted | Order Fact needs computed measures (date parts, day-count deltas); Customer/Product Dimensions only need field standardization — same Validator/Transformer split, table-type-appropriate Transformer scope |
 
 ---
 
@@ -786,7 +864,7 @@ main
 
 Build Status
 
-BUILD SUCCESSFUL (pending final local re-run after Serializable/naming fixes — see US-010 notes)
+BUILD SUCCESSFUL
 
 
 Current Sprint
@@ -796,16 +874,16 @@ Sprint 3
 
 Current User Story
 
-US011
+US012
 
-Order Fact
+Payment Fact
 
 
 Next User Story
 
-US012
+US013
 
-Payment Fact
+Technical Debt / Refactoring
 ```
 
 ---
@@ -846,5 +924,9 @@ Payment Fact
 | 2026-07-03 | Resolved US-013 numbering: US-013 is now Technical Debt / Refactoring; Sprint 4 renumbered US013→US014, US014→US015, US015→US016; Sprint 5 renumbered US016→US017, US017→US018, US018→US019 |
 | 2026-07-03 | Added US-013 Technical Debt / Refactoring story detail (planned scope) to Sprint 3 |
 | 2026-07-03 | Noted Kanban board currently only has issues through US-012; Sprint 4/5 remain document-only forward planning |
+| 2026-07-04 | US011 Order Silver Fact marked DONE                         |
+| 2026-07-04 | Added OrderSilverJob/OrderSilverService/OrderTransformer/OrderValidator and their tests to Current Folder Structure |
+| 2026-07-04 | Added Fact-vs-Dimension Transformer scope design decision to decision table |
+| 2026-07-04 | Advanced Current Status to Sprint 3 / US012, Next US013     |
 
 ---

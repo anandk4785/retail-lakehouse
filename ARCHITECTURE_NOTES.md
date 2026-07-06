@@ -777,7 +777,97 @@ service.
 
 ---
 
-# Future Architecture Decisions
+# ADR-019 : Order Silver Fact — Transformer Scope for Facts vs. Dimensions
+
+## Status: Accepted ✅
+
+## Context
+
+US-011 (Order Silver Fact) needed the same `BronzeReader` → `Validator` →
+`Transformer` → `SilverWriter` shape as US-009 (Customer) and US-010
+(Product), but Order is a **Fact** table, not a **Dimension**. Facts
+typically carry measures and derived metrics; dimensions carry descriptive
+attributes. Two related design questions came up while implementing it:
+
+1. How much should `OrderTransformer` do? `CustomerTransformer` and
+   `ProductTransformer` are narrowly scoped to standardization (casing,
+   null-fill on non-PK fields). Order's Silver value, however, is largely
+   about derived business metrics: purchase date parts, delivery duration,
+   delay versus estimate, approval and carrier-transit time, and an
+   `is_delivered` flag.
+2. How much should `OrderValidator` null-check? Every one of those derived
+   metrics depends on `order_purchase_timestamp` being present, in addition
+   to the usual primary key.
+
+## Decision
+
+- `OrderTransformer`'s scope is intentionally wider than `CustomerTransformer`/
+  `ProductTransformer`: it computes derived date-dimension and delivery/
+  processing-duration columns (via `datediff`, `year`, `month`, `dayofmonth`),
+  in addition to renaming and reshaping the final column set. This does not
+  violate ADR-017's Validator/Transformer split — validation (null/dedup)
+  still lives solely in `OrderValidator` — it simply means a Fact table's
+  Transformer naturally does more than a Dimension table's.
+- `OrderValidator` null-checks `order_id`, `customer_id`, and
+  `order_purchase_timestamp` (not just the primary key), because every
+  derived metric in `OrderTransformer` depends on `order_purchase_timestamp`
+  being non-null. It deliberately does **not** null-check
+  `order_approved_at`, `order_delivered_carrier_date`,
+  `order_delivered_customer_date`, or `order_estimated_delivery_date` —
+  those are legitimately null for orders still in flight (e.g. `shipped`
+  but not yet `delivered`), and forcing them non-null would incorrectly
+  drop valid, in-progress orders.
+
+## Reason
+
+- A Validator's null-check scope should match what the pipeline stage
+  immediately downstream of it actually requires to run correctly — not a
+  fixed "PK only" rule copied mechanically from the Customer/Product
+  precedent. Doing this while still being intentional (see ADR-018) about
+  not over-engineering.
+- Keeping derived-metric logic inside the Transformer (rather than, say, a
+  new pipeline stage) preserves the two-stage Validator/Transformer
+  contract from ADR-017 without adding a third abstraction before there's
+  evidence a third one is needed.
+
+## Consequences
+
+- Future Fact-table Silver pipelines (e.g. a Payment Fact in US-012) should
+  expect their Transformer to carry real business-metric logic, not just
+  standardization — this is now a documented, table-type-appropriate
+  pattern rather than a one-off for Order.
+- US-013's eventual generalization (ADR-018) needs to keep this in mind:
+  a single generic Transformer interface is still viable (both Dimension
+  and Fact Transformers return `Dataset<Row> transform(Dataset<Row>)`), but
+  a generic *implementation* of Transformer (unlike the generic
+  null-PK/dedup Validator) is unlikely to be worthwhile — Transformer logic
+  is expected to stay entity-specific.
+
+## Lessons Learned (recorded for interview prep)
+
+- **Correction (2026-07-05):** an earlier version of this ADR incorrectly
+  stated that `org.apache.spark.sql.functions.day(Column)` does not exist
+  in Spark 3.5.x's Java API. That was wrong — `day(Column e)` is
+  documented in the official Spark 3.5.6 Java API
+  (`spark.apache.org/docs/3.5.6/api/java/org/apache/spark/sql/functions.html`)
+  as an alias for `dayofmonth(Column e)`, both returning the day of the
+  month as an integer. `OrderTransformer` was changed from `day(...)` to
+  `dayofmonth(...)` during review based on this incorrect claim; the
+  change is harmless (both are equivalent and correct) but was not
+  actually necessary. Left as `dayofmonth(...)` since it's already merged
+  and functionally identical — no urgency to change it back.
+- **`Row.getAs(String)` combined with JUnit 5's overloaded `assertTrue`/
+  `assertFalse`** (which accept both `boolean` and `BooleanSupplier`) can
+  fail to compile due to generic type-inference ambiguity, since
+  `getAs`'s type parameter has nothing forcing it to `Boolean` without an
+  explicit cast. Fixed with `(boolean) result.getAs(...)`, consistent with
+  the `(int)` casts already used for numeric columns in the same test
+  files. This one holds — verified independently of the `day()` mistake
+  above.
+
+---
+
+
 
 The following decisions are expected later:
 
@@ -875,5 +965,7 @@ Dashboards
 | 2026-07-01 | Added ADR-016 : Universal Parquet Readers and Writers     |
 | 2026-07-01 | Added ADR-017 : Validator Pattern (Data Quality Separation) |
 | 2026-07-02 | Added ADR-018 : Intentional Duplication Across Silver Dimensions, Deferred to US-013 |
+| 2026-07-04 | Added ADR-019 : Order Silver Fact — Transformer Scope for Facts vs. Dimensions, plus Lessons Learned (Spark day() API gotcha, Row.getAs/assertTrue generics gotcha) |
+| 2026-07-05 | Corrected ADR-019 Lessons Learned: functions.day() DOES exist in Spark 3.5.6 (confirmed against official Javadoc) — earlier claim that it didn't was wrong |
 
 ---

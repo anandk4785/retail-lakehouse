@@ -16,6 +16,7 @@ public class PaymentValidator {
                 .filter(df.col("order_id").isNotNull())
                 .filter(df.col("payment_sequential").isNotNull())
                 .filter(df.col("payment_type").isNotNull())
+                .filter(df.col("payment_type").notEqual("not_defined"))
                 .filter(df.col("payment_value").geq(0))
                 .dropDuplicates("order_id", "payment_sequential");
     }

@@ -5,7 +5,9 @@ import org.apache.spark.sql.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import static org.apache.spark.sql.functions.coalesce;
 import static org.apache.spark.sql.functions.col;
+import static org.apache.spark.sql.functions.lit;
 
 public class PaymentTransformer {
 
@@ -17,7 +19,7 @@ public class PaymentTransformer {
                 // Payment Flags
                 .withColumn(
                         "is_installment_payment",
-                        col("payment_installments").gt(1)
+                        coalesce(col("payment_installments").gt(1), lit(false))
                 )
 
                 .withColumn(

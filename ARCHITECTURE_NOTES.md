@@ -867,7 +867,108 @@ attributes. Two related design questions came up while implementing it:
 
 ---
 
+# ADR-020 : Payment Silver Fact — Composite Natural Key, Verified Business Rules, and Rejected Mock-Based Service Test
 
+## Status: Accepted ✅
+
+## Context
+
+US-012 (Payment Silver Fact) surfaced a structural difference from every
+prior Silver entity: Customer, Product, and Order each have a
+single-column primary key (`customer_id`, `product_id`, `order_id`).
+Payment does not. Per the Olist data dictionary, a customer may pay a
+single order using more than one payment method (e.g. part voucher, part
+credit card); each method is stored as its own row, distinguished by
+`payment_sequential`.
+
+Three design questions came up while implementing it:
+
+1. What is Payment's natural key for deduplication?
+2. Which `payment_value`/`payment_type` values are genuinely invalid vs.
+   legitimate business cases?
+3. Should `PaymentSilverService` get a dedicated test, and if so, in what
+   style?
+
+## Decision
+
+**1. Composite key.** `PaymentValidator` deduplicates on
+`(order_id, payment_sequential)`, not `order_id` alone, and null-checks
+both columns before deduplication (`dropDuplicates` treats `null == null`
+as a match, so an unchecked `payment_sequential` could silently collapse
+two genuinely distinct payment rows). This was independently validated
+against the real dataset profile: `order_id` has 99,440 unique values
+against ~104k total rows, and `payment_sequential` ranges up to 29 —
+confirming the single-column approach used elsewhere would have caused
+real data loss here.
+
+An earlier test draft mislabeled this scenario as "multiple installment
+rows." That conflates two distinct Olist concepts: `payment_sequential`
+(multiple payment *methods* split across one order, each its own row) vs.
+`payment_installments` (a deferred repayment schedule *within* a single
+row, which does not create additional rows). Caught and corrected before
+merge — see `PaymentValidatorTest.shouldKeepMultipleSplitPaymentRowsForTheSameOrder`.
+
+**2. Verified, not assumed, business-rule filters.** `PaymentValidator`
+filters `payment_value >= 0` (not strictly `> 0`) and unconditionally
+excludes `payment_type == "not_defined"`. Both were set only after
+querying the real Bronze CSV directly: 9 rows have `payment_value = 0.0`
+— 6 `voucher` (a voucher can legitimately cover a split payment in full,
+leaving that row's amount at zero) and 3 `not_defined` (an inherently
+unknown/invalid payment method, treated as invalid regardless of its
+value). Filtering `payment_value > 0` would have silently dropped the 6
+legitimate voucher rows; filtering only on value without also excluding
+`not_defined` would have kept 0 of those 3 invalid rows out only by
+coincidence of their value being zero, not because the filter targeted
+the actual invalid condition.
+
+**3. Rejected: a Mockito-based `PaymentSilverServiceTest`.** A test
+mocking `BronzeReader`/`SilverWriter` and asserting via `ArgumentCaptor`/
+`verify(...)` was written and reviewed. It was not adopted. No other
+entity (Customer excepted — see below) has a service-level test, and
+Mockito is not otherwise a dependency of this project. `CustomerSilverServiceTest`
+does exist, but it is a classical, state-based integration test (seeds
+real Bronze Parquet via `BronzeWriter`, runs the real service end-to-end,
+reads real Silver Parquet back) with no mocking involved — a different
+category of test, not a precedent for a mockist one. Adopting Mockito for
+Payment alone, with no other entity following suit, would be an
+inconsistency without a documented reason. Payment's test coverage is
+`PaymentValidatorTest` and `PaymentTransformerTest` only, matching
+Product's and Order's pattern.
+
+## Reason
+
+- A Validator's key and filter logic should be derived from the actual
+  domain and the actual data, not copied mechanically from the previous
+  entity's precedent — the composite-key decision and the verified-filter
+  decisions are both instances of this same principle, already established
+  for Order's expanded null-checks in ADR-019.
+- Confirming assumptions against real data before writing the tests that
+  lock them in (rather than after) avoids shipping a green test suite that
+  quietly encodes a wrong assumption.
+- Test-style consistency across entities is itself a design decision worth
+  making deliberately rather than by accident — introducing a new test
+  framework dependency for one entity, with no stated reason, would read
+  as inconsistency rather than intentional variation to a future reviewer.
+
+## Consequences
+
+- `PaymentValidator` is the most complex Validator in the project so far —
+  a composite key, two business-rule filters, and three null-checks,
+  versus a single PK null-check + dedup for Customer/Product. US-013's
+  planned generic single-PK validator (ADR-018) will not fit Payment; the
+  US-013 scope has been updated to note `PaymentValidator` is expected to
+  remain a dedicated class.
+- Mockito remains outside the project's dependencies. If a future story
+  has a genuine reason to need interaction-based testing (verifying call
+  counts/arguments rather than state), that will be its own deliberate
+  decision, not inherited from this one.
+- The distinction between `payment_sequential` and `payment_installments`
+  is recorded here as a durable domain note, since it's easy to
+  re-confuse and cheap to get wrong in a future Gold-layer aggregation.
+
+---
+
+# Future Architecture Decisions
 
 The following decisions are expected later:
 
@@ -967,5 +1068,7 @@ Dashboards
 | 2026-07-02 | Added ADR-018 : Intentional Duplication Across Silver Dimensions, Deferred to US-013 |
 | 2026-07-04 | Added ADR-019 : Order Silver Fact — Transformer Scope for Facts vs. Dimensions, plus Lessons Learned (Spark day() API gotcha, Row.getAs/assertTrue generics gotcha) |
 | 2026-07-05 | Corrected ADR-019 Lessons Learned: functions.day() DOES exist in Spark 3.5.6 (confirmed against official Javadoc) — earlier claim that it didn't was wrong |
+| 2026-07-06 | Added ADR-020 : Payment Silver Fact — Composite Natural Key, Verified Business Rules, and Rejected Mock-Based Service Test |
+| 2026-07-06 | Restored missing "Future Architecture Decisions" section header |
 
 ---

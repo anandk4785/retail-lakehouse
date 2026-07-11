@@ -33,6 +33,7 @@ logs/
 # venv
 
 .venv/
+venv_parquet
 
 
 # Spark

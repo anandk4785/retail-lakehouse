@@ -215,6 +215,8 @@ feature/us010-product-silver-dimension
 
 feature/us011-order-silver-fact
 
+feature/us012-payment-silver-fact
+
 feature/us013-technical-debt-refactoring
 ```
 
@@ -281,7 +283,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductSilverJob
 
-│   └── OrderSilverJob
+│   ├── OrderSilverJob
+
+│   └── PaymentSilverJob
 
 ├── reader
 
@@ -319,7 +323,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductSilverService
 
-│   └── OrderSilverService
+│   ├── OrderSilverService
+
+│   └── PaymentSilverService
 
 ├── transform
 
@@ -327,7 +333,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductTransformer
 
-│   └── OrderTransformer
+│   ├── OrderTransformer
+
+│   └── PaymentTransformer
 
 ├── validator
 
@@ -335,7 +343,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductValidator
 
-│   └── OrderValidator
+│   ├── OrderValidator
+
+│   └── PaymentValidator
 
 └── writer
 
@@ -384,7 +394,9 @@ src/test/java/com/anand/retail
 
 │   ├── ProductTransformerTest
 
-│   └── OrderTransformerTest
+│   ├── OrderTransformerTest
+
+│   └── PaymentTransformerTest
 
 ├── validator
 
@@ -392,7 +404,9 @@ src/test/java/com/anand/retail
 
 │   ├── ProductValidatorTest
 
-│   └── OrderValidatorTest
+│   ├── OrderValidatorTest
+
+│   └── PaymentValidatorTest
 
 └── writer
 
@@ -753,7 +767,61 @@ Review findings, fixed before merge:
 
 US012
 
-Payment Fact
+Payment Silver Fact
+
+Status : DONE
+
+Implemented:
+
+- PaymentValidator (null-checks on order_id, payment_sequential, AND
+  payment_type; excludes payment_type = "not_defined" unconditionally;
+  keeps payment_value >= 0 — not strictly > 0 — since 0.0 is a verified
+  legitimate value for "voucher" rows; dedup on the COMPOSITE key
+  (order_id, payment_sequential), not order_id alone)
+
+- PaymentTransformer (derived flags is_installment_payment and
+  is_credit_card; renames payment_value to payment_amount; logged as
+  "Payment Fact", consistent with Order)
+
+- PaymentSilverService (DI-based orchestration, Serializable — same
+  gap caught and fixed here as on ProductSilverService in US-010)
+
+- PaymentSilverJob (assembly-line main class)
+
+- PaymentValidatorTest, PaymentTransformerTest
+
+Design notes:
+
+- Payment has no single-column natural key, unlike Customer/Product/
+  Order. Per the Olist data dictionary, a customer may pay one order
+  using more than one payment method (e.g. part voucher, part credit
+  card); each method gets its own row, distinguished by
+  payment_sequential — NOT to be confused with payment_installments,
+  which describes a deferred repayment schedule *within* a single row
+  and does not create additional rows. Confused these two concepts in
+  an early test draft; caught and corrected before merge. The composite-
+  key design was independently validated against the real dataset
+  profile: order_id has 99,440 unique values against ~104k total rows,
+  and payment_sequential ranges up to 29 — confirming dropDuplicates on
+  order_id alone would have silently discarded real, distinct payment
+  rows. See ADR-020.
+
+- payment_value >= 0 and payment_type != "not_defined" were both
+  verified against the real Bronze CSV before being locked into tests,
+  rather than assumed: 9 rows have payment_value = 0.0 (6 voucher,
+  3 not_defined). Voucher-zero rows are legitimate (a voucher can fully
+  cover a split payment); not_defined rows are excluded regardless of
+  value, since "not_defined" itself represents unknown/invalid payment
+  method data. See ADR-020.
+
+- A Mockito-based, interaction-style PaymentSilverServiceTest was
+  written and reviewed (mocking BronzeReader/SilverWriter, asserting via
+  ArgumentCaptor and verify(...)) but was deliberately NOT adopted.
+  Customer/Product/Order have no service-level test — only Validator/
+  Transformer tests — and Mockito is not otherwise a dependency of this
+  project. Introducing it for one entity would be an inconsistency
+  without a documented reason to justify it. PaymentSilverServiceTest is
+  not part of the merged test suite. See ADR-020.
 
 
 US013
@@ -768,12 +836,15 @@ Planned scope:
 - Introduce DataValidator / DataTransformer interfaces
 
 - Introduce a generic, configurable validator for null-PK/dedup handling
-  (replacing CustomerValidator, ProductValidator, OrderValidator,
-  PaymentValidator)
+  for the entities where a single-column PK applies (CustomerValidator,
+  ProductValidator, OrderValidator). PaymentValidator's composite-key
+  and business-rule logic (not_defined exclusion, value >= 0) is
+  expected to remain a dedicated class rather than fit the generic
+  single-PK validator — to be confirmed during the refactor itself.
 
 - Introduce a single generic, DI-driven Silver service (replacing
-  CustomerSilverService, ProductSilverService, and their Order/Payment
-  equivalents)
+  CustomerSilverService, ProductSilverService, OrderSilverService,
+  PaymentSilverService)
 
 - Retain entity-specific Transformer classes (standardization logic
   differs meaningfully per entity — not a generalization candidate)
@@ -851,6 +922,9 @@ Monitoring
 | Intentional per-entity duplication (US-010 to US-012), refactor in US-013 (Technical Debt / Refactoring) | Accepted | Avoids premature abstraction from a single example; generalize against proven, tested cases |
 | Sprint 4/5 stories renumbered (US-013 reserved for Technical Debt) | Accepted | Kanban board only has issues through US-012; renumbering forward-planned stories in docs is cheap and keeps board/document numbering aligned before those issues are created |
 | Fact-table Transformers derive metrics; Dimension Transformers only standardize | Accepted | Order Fact needs computed measures (date parts, day-count deltas); Customer/Product Dimensions only need field standardization — same Validator/Transformer split, table-type-appropriate Transformer scope |
+| Payment Validator dedups on composite key (order_id, payment_sequential), not a single-column PK | Accepted | Verified against real data: order_id has 99,440 unique values vs. ~104k total payment rows; a customer may split one order's payment across multiple methods, each its own row |
+| Validator business-rule filters (payment_value >= 0, payment_type != "not_defined") set from verified real-data findings, not assumptions | Accepted | Confirmed 9 zero-value rows exist (6 legitimate voucher, 3 invalid not_defined) before writing the filters or the tests that lock them in |
+| Mockito-based PaymentSilverServiceTest reviewed but not adopted | Rejected | No other entity has a service-level test, and Mockito is not otherwise a project dependency; adopting it for one entity only would be an undocumented inconsistency |
 
 ---
 
@@ -874,16 +948,15 @@ Sprint 3
 
 Current User Story
 
-US012
+US013
 
-Payment Fact
+Technical Debt / Refactoring
 
 
 Next User Story
 
-US013
-
-Technical Debt / Refactoring
+None — Sprint 3 (Silver Layer) complete pending US-013. Sprint 4 (Hive
+Metastore, US-014) follows.
 ```
 
 ---
@@ -928,5 +1001,10 @@ Technical Debt / Refactoring
 | 2026-07-04 | Added OrderSilverJob/OrderSilverService/OrderTransformer/OrderValidator and their tests to Current Folder Structure |
 | 2026-07-04 | Added Fact-vs-Dimension Transformer scope design decision to decision table |
 | 2026-07-04 | Advanced Current Status to Sprint 3 / US012, Next US013     |
+| 2026-07-06 | US012 Payment Silver Fact marked DONE                        |
+| 2026-07-06 | Added PaymentSilverJob/PaymentSilverService/PaymentTransformer/PaymentValidator and their tests to Current Folder Structure |
+| 2026-07-06 | Added composite-key, verified-filter, and rejected-Mockito-test design decisions to decision table |
+| 2026-07-06 | Noted PaymentSilverServiceTest reviewed but not merged; Payment tests limited to PaymentValidatorTest/PaymentTransformerTest, consistent with Product/Order |
+| 2026-07-06 | Advanced Current Status to Sprint 3 / US013 (Technical Debt / Refactoring) |
 
 ---

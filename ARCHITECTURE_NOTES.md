@@ -565,6 +565,32 @@ com.anand.retail.schema
 - Slightly more upfront code per entity
 - Faster job startup
 
+## Addendum (US-013, 2026-07-19): Column-Name Constants
+
+Each Schema class now also exposes its column names as
+`public static final String` constants (e.g.
+`OrderSchema.ORDER_ID = "order_id"`), which `getSchema()` itself
+references when building the `StructType`. Job-wiring code (e.g.
+`NullPkDedupValidator`'s required/dedup column arrays in
+`CustomerSilverJob`/`ProductSilverJob`/`OrderSilverJob`) uses these
+constants instead of raw string literals.
+
+Reason: a misspelled string literal used to fail silently at Spark
+runtime (an `AnalysisException` when the job actually ran against real
+data); a misspelled constant reference now fails at compile time. This
+also guarantees the exact same value is used everywhere a column name is
+referenced — the schema definition and every consumer of it share one
+source of truth, with no second definition that could drift.
+
+Consequence: `Test` classes for `NullPkDedupValidator` and `SilverService`
+were updated to reference these constants too (e.g.
+`CustomerSchema.CUSTOMER_ID`), rather than repeating literals — a test
+asserting against a stale string would otherwise keep passing even after
+a real schema rename, defeating the purpose of the constant.
+`*Transformer` classes still reference raw column-name strings
+internally; migrating them to the same constants is a reasonable future
+follow-up, not required by this change.
+
 ---
 
 # ADR-013 : Centralized Bronze Writer
@@ -756,17 +782,34 @@ service.
 ## Consequences
 
 - `ProductValidator` / `OrderValidator` / `PaymentValidator` and their
-  `Transformer` counterparts will contain near-identical null-PK/dedup
-  logic until US-013.
-- `ProductSilverService` (and its Order/Payment equivalents) duplicate the
-  orchestration shape of `CustomerSilverService` almost line for line.
-- US-013 is expected to: introduce `DataValidator` / `DataTransformer`
-  interfaces, a generic configurable validator for null-PK/dedup handling,
-  and a single generic Silver service replacing all four per-entity
-  services — retiring the entity-specific `Validator` / `Service` classes
-  in favor of DI-configured generic ones. Entity-specific `Transformer`
-  classes are expected to remain, since standardization logic differs
-  meaningfully per entity (see ADR-017).
+  `Transformer` counterparts intentionally contained near-identical
+  null-PK/dedup logic until US-013 gave the project enough real Silver
+  pipelines to generalize from.
+- `ProductSilverService` (and its Order/Payment equivalents) intentionally
+  duplicated the orchestration shape of `CustomerSilverService` almost line
+  for line until US-013.
+- US-013 introduces `DataValidator` / `DataTransformer` interfaces,
+  `NullPkDedupValidator` for configurable required-column filtering and
+  deduplication, and a single generic `SilverService` that accepts
+  `BronzeReader`, `DataValidator`, `DataTransformer`, `SilverWriter`, and
+  `LakehouseTable` through constructor injection.
+- Customer, Product, and Order Silver jobs now wire `NullPkDedupValidator`
+  directly with their table-specific required and dedup columns. Payment
+  Silver keeps `PaymentValidator`, because its composite key and business
+  filters (`payment_type != "not_defined"`, `payment_value >= 0`) are
+  domain-specific and should not be forced into the generic null/dedup
+  validator.
+- Entity-specific Transformer classes remain by design. They implement
+  `DataTransformer`, but their transformation logic differs meaningfully
+  by table type and is not a generalization candidate (see ADR-017,
+  ADR-019, and ADR-020).
+- The old entity-specific Silver service classes
+  (`CustomerSilverService`, `ProductSilverService`, `OrderSilverService`,
+  `PaymentSilverService`) and the generic-replaced Customer/Product/Order
+  validator classes (`CustomerValidator`, `ProductValidator`,
+  `OrderValidator`, and their tests) have been deleted as the closing
+  step of US-013. `PaymentValidator` and `PaymentValidatorTest` remain,
+  per the decision above.
 - US-013 is reserved for this Technical Debt / Refactoring story. Since
   the Kanban board only has issues created through US-012, the previously
   planned US-013 (Hive Metastore) and later Sprint 4/5 stories shift up by
@@ -925,7 +968,7 @@ the actual invalid condition.
 mocking `BronzeReader`/`SilverWriter` and asserting via `ArgumentCaptor`/
 `verify(...)` was written and reviewed. It was not adopted. No other
 entity (Customer excepted — see below) has a service-level test, and
-Mockito is not otherwise a dependency of this project. `CustomerSilverServiceTest`
+Mockito is not otherwise a dependency of this project. `SilverServiceTest`
 does exist, but it is a classical, state-based integration test (seeds
 real Bronze Parquet via `BronzeWriter`, runs the real service end-to-end,
 reads real Silver Parquet back) with no mocking involved — a different
@@ -954,10 +997,9 @@ Product's and Order's pattern.
 
 - `PaymentValidator` is the most complex Validator in the project so far —
   a composite key, two business-rule filters, and three null-checks,
-  versus a single PK null-check + dedup for Customer/Product. US-013's
-  planned generic single-PK validator (ADR-018) will not fit Payment; the
-  US-013 scope has been updated to note `PaymentValidator` is expected to
-  remain a dedicated class.
+  versus generic null-check + dedup handling for Customer/Product/Order.
+  US-013's `NullPkDedupValidator` intentionally does not absorb Payment;
+  `PaymentValidator` remains a dedicated `DataValidator` implementation.
 - Mockito remains outside the project's dependencies. If a future story
   has a genuine reason to need interaction-based testing (verifying call
   counts/arguments rather than state), that will be its own deliberate
@@ -1070,5 +1112,7 @@ Dashboards
 | 2026-07-05 | Corrected ADR-019 Lessons Learned: functions.day() DOES exist in Spark 3.5.6 (confirmed against official Javadoc) — earlier claim that it didn't was wrong |
 | 2026-07-06 | Added ADR-020 : Payment Silver Fact — Composite Natural Key, Verified Business Rules, and Rejected Mock-Based Service Test |
 | 2026-07-06 | Restored missing "Future Architecture Decisions" section header |
+| 2026-07-19 | Added ADR-012 Addendum : Schema column-name constants (typo-safety at compile time), referenced from Silver job wiring and validator/service tests |
+| 2026-07-19 | Updated ADR-018 Consequences: retired entity-specific Silver services and Customer/Product/Order validators (+ tests) confirmed deleted, closing US-013 |
 
 ---

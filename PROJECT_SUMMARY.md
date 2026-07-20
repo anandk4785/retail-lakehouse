@@ -319,15 +319,11 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentService
 
-│   ├── CustomerSilverService
-
-│   ├── ProductSilverService
-
-│   ├── OrderSilverService
-
-│   └── PaymentSilverService
+│   └── SilverService
 
 ├── transform
+
+│   ├── DataTransformer
 
 │   ├── CustomerTransformer
 
@@ -339,11 +335,9 @@ src/main/java/com/anand/retail
 
 ├── validator
 
-│   ├── CustomerValidator
+│   ├── DataValidator
 
-│   ├── ProductValidator
-
-│   ├── OrderValidator
+│   ├── NullPkDedupValidator
 
 │   └── PaymentValidator
 
@@ -386,7 +380,7 @@ src/test/java/com/anand/retail
 
 │   ├── PaymentServiceTest
 
-│   └── CustomerSilverServiceTest
+│   └── SilverServiceTest
 
 ├── transform
 
@@ -400,11 +394,7 @@ src/test/java/com/anand/retail
 
 ├── validator
 
-│   ├── CustomerValidatorTest
-
-│   ├── ProductValidatorTest
-
-│   ├── OrderValidatorTest
+│   ├── NullPkDedupValidatorTest
 
 │   └── PaymentValidatorTest
 
@@ -828,31 +818,60 @@ US013
 
 Technical Debt / Refactoring
 
+Status : DONE
+
 Consolidates the intentional duplication introduced across US-010
 (Product), US-011 (Order Fact), and US-012 (Payment Fact) — see ADR-018.
 
-Planned scope:
+Implemented:
 
-- Introduce DataValidator / DataTransformer interfaces
+- Introduced DataValidator / DataTransformer interfaces
 
-- Introduce a generic, configurable validator for null-PK/dedup handling
-  for the entities where a single-column PK applies (CustomerValidator,
-  ProductValidator, OrderValidator). PaymentValidator's composite-key
-  and business-rule logic (not_defined exclusion, value >= 0) is
-  expected to remain a dedicated class rather than fit the generic
-  single-PK validator — to be confirmed during the refactor itself.
+- Introduced NullPkDedupValidator as the generic, configurable validator
+  for required-column filtering plus deduplication
 
-- Introduce a single generic, DI-driven Silver service (replacing
+- Wired Customer, Product, and Order Silver jobs with NullPkDedupValidator
+  using table-specific required and dedup columns
+
+- Kept PaymentValidator as a dedicated DataValidator implementation
+  because Payment needs composite-key deduplication plus business-rule
+  filters (payment_type != "not_defined", payment_value >= 0)
+
+- Introduced a single generic, DI-driven SilverService that orchestrates
+  BronzeReader -> DataValidator -> DataTransformer -> SilverWriter for a
+  provided LakehouseTable
+
+- Updated all *SilverJob classes to instantiate the generic SilverService
+
+- Retained entity-specific Transformer classes and made them conform to
+  the DataTransformer contract
+
+- Replaced the CustomerSilverServiceTest coverage with SilverServiceTest
+  and added NullPkDedupValidatorTest for Customer/Product/Order-style
+  validator configurations
+
+- Added column-name constants (e.g. CustomerSchema.CUSTOMER_ID) to every
+  Schema class, referenced from Silver job wiring and from
+  NullPkDedupValidatorTest/SilverServiceTest, replacing raw string
+  literals with compile-time-checked references (see ADR-012 Addendum)
+
+Verification:
+
+- ./gradlew test --tests com.anand.retail.validator.NullPkDedupValidatorTest --tests com.anand.retail.service.SilverServiceTest
+
+- ./gradlew test
+
+Cleanup completed:
+
+- Deleted retired entity-specific Silver service classes:
   CustomerSilverService, ProductSilverService, OrderSilverService,
-  PaymentSilverService)
+  PaymentSilverService
 
-- Retain entity-specific Transformer classes (standardization logic
-  differs meaningfully per entity — not a generalization candidate)
+- Deleted generic-replaced validator classes and tests:
+  CustomerValidator, ProductValidator, OrderValidator,
+  CustomerValidatorTest, ProductValidatorTest, OrderValidatorTest
 
-- Update all *SilverJob classes to wire the generic service
-
-- Full regression pass: all existing Silver-layer tests must continue to
-  pass unchanged in behavior after the refactor
+- Full regression suite re-run after deletion; all tests green
 ```
 
 Matches the Kanban board 1:1 — issues are currently tracked through
@@ -925,6 +944,8 @@ Monitoring
 | Payment Validator dedups on composite key (order_id, payment_sequential), not a single-column PK | Accepted | Verified against real data: order_id has 99,440 unique values vs. ~104k total payment rows; a customer may split one order's payment across multiple methods, each its own row |
 | Validator business-rule filters (payment_value >= 0, payment_type != "not_defined") set from verified real-data findings, not assumptions | Accepted | Confirmed 9 zero-value rows exist (6 legitimate voucher, 3 invalid not_defined) before writing the filters or the tests that lock them in |
 | Mockito-based PaymentSilverServiceTest reviewed but not adopted | Rejected | No other entity has a service-level test, and Mockito is not otherwise a project dependency; adopting it for one entity only would be an undocumented inconsistency |
+| US-013 generic SilverService and NullPkDedupValidator | Accepted | Four Silver pipelines proved the shared orchestration shape; Customer/Product/Order share configurable null-filter/dedup behavior while Payment keeps a dedicated validator for domain-specific rules |
+| Schema classes expose column-name constants, referenced by job wiring and tests instead of string literals | Accepted | A misspelled literal fails silently at Spark runtime; a misspelled constant fails at compile time — one source of truth per column name |
 
 ---
 
@@ -943,20 +964,23 @@ BUILD SUCCESSFUL
 
 Current Sprint
 
-Sprint 3
+Sprint 3 — COMPLETE
 
 
 Current User Story
 
-US013
-
-Technical Debt / Refactoring
+None — US013 (Technical Debt / Refactoring) closed; Sprint 3 (Silver
+Layer: Customer, Product, Order, Payment, plus the US-013 consolidation)
+is fully complete.
 
 
 Next User Story
 
-None — Sprint 3 (Silver Layer) complete pending US-013. Sprint 4 (Hive
-Metastore, US-014) follows.
+US014
+
+Hive Metastore (Sprint 4) — Docker becomes justified here (Hive
+Metastore's backing RDBMS); see prior discussion on deferring Docker
+until this story.
 ```
 
 ---
@@ -1006,5 +1030,11 @@ Metastore, US-014) follows.
 | 2026-07-06 | Added composite-key, verified-filter, and rejected-Mockito-test design decisions to decision table |
 | 2026-07-06 | Noted PaymentSilverServiceTest reviewed but not merged; Payment tests limited to PaymentValidatorTest/PaymentTransformerTest, consistent with Product/Order |
 | 2026-07-06 | Advanced Current Status to Sprint 3 / US013 (Technical Debt / Refactoring) |
+| 2026-07-19 | Documented US-013 generic DataValidator/DataTransformer, NullPkDedupValidator, SilverService, Silver job rewiring, and focused regression tests |
+| 2026-07-19 | Marked retired entity-specific Silver services and Customer/Product/Order validators/tests as pending deletion before closing US-013 |
+| 2026-07-20 | Confirmed deletion of CustomerSilverService/ProductSilverService/OrderSilverService/PaymentSilverService and CustomerValidator/ProductValidator/OrderValidator (+ tests); removed "(pending US-013 deletion)" markers from Current Folder Structure |
+| 2026-07-20 | US013 Technical Debt / Refactoring marked DONE; Sprint 3 marked COMPLETE |
+| 2026-07-20 | Added schema column-name constants design decision to decision table |
+| 2026-07-20 | Advanced Current Status: no current story (Sprint 3 complete), Next US014 (Hive Metastore, Sprint 4) |
 
 ---

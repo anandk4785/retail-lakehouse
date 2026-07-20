@@ -5,6 +5,8 @@ import org.apache.spark.sql.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Serializable;
+
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.upper;
 import static org.apache.spark.sql.functions.trim;
@@ -12,13 +14,14 @@ import static org.apache.spark.sql.functions.initcap;
 
 
 
-public class CustomerTransformer {
+public class CustomerTransformer implements DataTransformer, Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(CustomerTransformer.class);
 
     /**
      * Transforms raw Bronze customer data into a clean Silver Dimension.
      */
+    @Override
     public Dataset<Row> transform(Dataset<Row> customerDf) {
         logger.info("Applying Silver transformations for Customer Dimension");
 

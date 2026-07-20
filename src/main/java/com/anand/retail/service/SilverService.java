@@ -2,8 +2,8 @@ package com.anand.retail.service;
 
 import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.reader.BronzeReader;
-import com.anand.retail.transform.PaymentTransformer;
-import com.anand.retail.validator.PaymentValidator;
+import com.anand.retail.transform.DataTransformer;
+import com.anand.retail.validator.DataValidator;
 import com.anand.retail.writer.SilverWriter;
 import org.apache.spark.sql.Dataset;
 import org.apache.spark.sql.Row;
@@ -13,47 +13,49 @@ import org.slf4j.LoggerFactory;
 
 import java.io.Serializable;
 
-public class PaymentSilverService implements Serializable {
+public class SilverService implements Serializable {
 
-    private static final Logger logger = LoggerFactory.getLogger(PaymentSilverService.class);
+    private static final Logger logger = LoggerFactory.getLogger(SilverService.class);
 
     private final BronzeReader reader;
-    private final PaymentTransformer transformer;
-    private final PaymentValidator validator;
+    private final DataValidator validator;
+    private final DataTransformer transformer;
     private final SilverWriter writer;
+    private final LakehouseTable table;
 
-    public PaymentSilverService(
+    public SilverService(
             BronzeReader reader,
-            PaymentTransformer transformer,
-            PaymentValidator validator,
-            SilverWriter writer
+            DataValidator validator,
+            DataTransformer transformer,
+            SilverWriter writer,
+            LakehouseTable table
     ) {
         this.reader = reader;
-        this.transformer = transformer;
         this.validator = validator;
+        this.transformer = transformer;
         this.writer = writer;
+        this.table = table;
     }
 
     public void run(SparkSession spark) {
-        logger.info("--- Starting Payment Silver Execution Flow ---");
-
+        logger.info("--- Starting {} Silver Execution Flow ---", table.name());
         long startTime = System.currentTimeMillis();
 
-        Dataset<Row> rawDf = reader.readTable(spark, LakehouseTable.PAYMENTS);
+        Dataset<Row> rawDf = reader.readTable(spark, table);
         long inputCount = rawDf.count();
         logger.info("Input Count: {}", inputCount);
 
         Dataset<Row> validDf = validator.validate(rawDf);
         long validCount = validDf.count();
-        logger.info("Invalid/Duplicate Records Removed: {}", (inputCount - validCount));
+        logger.info("Invalid/Duplicate records removed: {}", (inputCount - validCount));
 
         Dataset<Row> silverDf = transformer.transform(validDf);
         long outputCount = silverDf.count();
-        logger.info("Output Records Count: {}", outputCount);
+        logger.info("Output records count: {}", outputCount);
 
-        writer.writeTable(silverDf, LakehouseTable.PAYMENTS);
+        writer.writeTable(silverDf, table);
 
         long endTime = System.currentTimeMillis();
-        logger.info("--- Execution completed in {} ms", (endTime - startTime));
+        logger.info("--- Execution Completed in {} ms ---", (endTime - startTime));
     }
 }

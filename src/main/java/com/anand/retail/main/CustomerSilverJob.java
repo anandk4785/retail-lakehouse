@@ -1,10 +1,12 @@
 package com.anand.retail.main;
 
+import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.factory.SparkSessionFactory;
 import com.anand.retail.reader.BronzeReader;
-import com.anand.retail.service.CustomerSilverService;
+import com.anand.retail.schema.CustomerSchema;
+import com.anand.retail.service.SilverService;
 import com.anand.retail.transform.CustomerTransformer;
-import com.anand.retail.validator.CustomerValidator;
+import com.anand.retail.validator.NullPkDedupValidator;
 import com.anand.retail.writer.SilverWriter;
 import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
@@ -20,12 +22,16 @@ public class CustomerSilverJob {
         SparkSession spark = SparkSessionFactory.getSparkSession();
 
         try {
-            // Assembly Line: Injecting Dependenciesze
-            CustomerSilverService service = new CustomerSilverService(
+            // Assembly Line: Injecting Dependencies
+            SilverService service = new SilverService(
                     new BronzeReader(),
+                    new NullPkDedupValidator(
+                            new String[] {CustomerSchema.CUSTOMER_ID},
+                            new String[] {CustomerSchema.CUSTOMER_ID}
+                    ),
                     new CustomerTransformer(),
-                    new CustomerValidator(),
-                    new SilverWriter()
+                    new SilverWriter(),
+                    LakehouseTable.CUSTOMERS
             );
 
             // Execute the pipeline

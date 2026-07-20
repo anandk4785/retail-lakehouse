@@ -1,10 +1,12 @@
 package com.anand.retail.main;
 
+import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.factory.SparkSessionFactory;
 import com.anand.retail.reader.BronzeReader;
-import com.anand.retail.service.ProductSilverService;
+import com.anand.retail.schema.ProductSchema;
+import com.anand.retail.service.SilverService;
 import com.anand.retail.transform.ProductTransformer;
-import com.anand.retail.validator.ProductValidator;
+import com.anand.retail.validator.NullPkDedupValidator;
 import com.anand.retail.writer.SilverWriter;
 import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
@@ -20,11 +22,15 @@ public class ProductSilverJob {
         SparkSession spark = SparkSessionFactory.getSparkSession();
 
         try {
-            ProductSilverService service = new ProductSilverService(
+            SilverService service = new SilverService(
                     new BronzeReader(),
+                    new NullPkDedupValidator(
+                            new String[]{ProductSchema.PRODUCT_ID},
+                            new String[]{ProductSchema.PRODUCT_ID}
+                    ),
                     new ProductTransformer(),
-                    new ProductValidator(),
-                    new SilverWriter()
+                    new SilverWriter(),
+                    LakehouseTable.PRODUCTS
             );
 
             service.run(spark);

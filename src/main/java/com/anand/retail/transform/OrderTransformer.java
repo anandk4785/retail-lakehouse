@@ -5,6 +5,8 @@ import org.apache.spark.sql.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Serializable;
+
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.datediff;
 import static org.apache.spark.sql.functions.day;
@@ -12,10 +14,11 @@ import static org.apache.spark.sql.functions.month;
 import static org.apache.spark.sql.functions.to_date;
 import static org.apache.spark.sql.functions.year;
 
-public class OrderTransformer {
+public class OrderTransformer implements DataTransformer, Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderTransformer.class);
 
+    @Override
     public Dataset<Row> transform(Dataset<Row> orderDf) {
         logger.info("Applying Silver transformations for Order Fact");
 

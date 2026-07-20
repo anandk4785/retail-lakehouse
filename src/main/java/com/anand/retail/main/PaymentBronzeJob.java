@@ -34,7 +34,7 @@ public class PaymentBronzeJob {
 
             logger.info("Payment Bronze Job Completed Successfully.");
         } catch (Exception e) {
-            logger.error("Payment Bronze Job failed fatally!");
+            logger.error("Payment Bronze Job failed fatally!", e);
 
             throw new RuntimeException(e);
         } finally {

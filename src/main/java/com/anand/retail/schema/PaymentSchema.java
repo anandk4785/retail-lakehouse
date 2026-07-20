@@ -5,16 +5,22 @@ import org.apache.spark.sql.types.StructType;
 
 public final class PaymentSchema {
 
+    public static final String ORDER_ID = "order_id";
+    public static final String PAYMENT_SEQUENTIAL = "payment_sequential";
+    public static final String PAYMENT_TYPE = "payment_type";
+    public static final String PAYMENT_INSTALLMENTS = "payment_installments";
+    public static final String PAYMENT_VALUE = "payment_value";
+
     private PaymentSchema() {
 
     }
 
     public static StructType getSchema() {
         return new StructType()
-                .add("order_id", DataTypes.StringType, false)
-                .add("payment_sequential", DataTypes.IntegerType, true)
-                .add("payment_type", DataTypes.StringType, true)
-                .add("payment_installments", DataTypes.IntegerType, true)
-                .add("payment_value", DataTypes.DoubleType, true);
+                .add(ORDER_ID, DataTypes.StringType, false)
+                .add(PAYMENT_SEQUENTIAL, DataTypes.IntegerType, true)
+                .add(PAYMENT_TYPE, DataTypes.StringType, true)
+                .add(PAYMENT_INSTALLMENTS, DataTypes.IntegerType, true)
+                .add(PAYMENT_VALUE, DataTypes.DoubleType, true);
     }
 }

@@ -5,14 +5,17 @@ import org.apache.spark.sql.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.Serializable;
+
 import static org.apache.spark.sql.functions.coalesce;
 import static org.apache.spark.sql.functions.col;
 import static org.apache.spark.sql.functions.lit;
 
-public class PaymentTransformer {
+public class PaymentTransformer implements DataTransformer, Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(PaymentTransformer.class);
 
+    @Override
     public Dataset<Row> transform(Dataset<Row> df) {
         logger.info("Applying transformations for Payment Fact");
         return df

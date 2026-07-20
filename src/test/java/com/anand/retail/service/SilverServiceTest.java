@@ -3,8 +3,9 @@ package com.anand.retail.service;
 import com.anand.retail.config.ConfigLoader;
 import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.reader.BronzeReader;
+import com.anand.retail.schema.CustomerSchema;
 import com.anand.retail.transform.CustomerTransformer;
-import com.anand.retail.validator.CustomerValidator;
+import com.anand.retail.validator.NullPkDedupValidator;
 import com.anand.retail.writer.BronzeWriter;
 import com.anand.retail.writer.SilverWriter;
 import org.apache.spark.sql.Dataset;
@@ -26,7 +27,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-public class CustomerSilverServiceTest {
+public class SilverServiceTest {
 
     private static SparkSession spark;
 
@@ -39,7 +40,7 @@ public class CustomerSilverServiceTest {
     static void setup() {
         spark = SparkSession
                 .builder()
-                .appName("CustomerSilverServiceTest")
+                .appName("SilverServiceTest")
                 .master("local[1]")
                 .config("spark.ui.enabled", "false")
                 .getOrCreate();
@@ -47,9 +48,9 @@ public class CustomerSilverServiceTest {
         // Seed the Bronze layer ourselves so this test is self-contained and
         // does not depend on CustomerBronzeJob having been run beforehand.
         StructType schema = DataTypes.createStructType(new StructField[]{
-                DataTypes.createStructField("customer_id", DataTypes.StringType, true),
-                DataTypes.createStructField("customer_city", DataTypes.StringType, true),
-                DataTypes.createStructField("customer_state", DataTypes.StringType, true)
+                DataTypes.createStructField(CustomerSchema.CUSTOMER_ID, DataTypes.StringType, true),
+                DataTypes.createStructField(CustomerSchema.CUSTOMER_CITY, DataTypes.StringType, true),
+                DataTypes.createStructField(CustomerSchema.CUSTOMER_STATE, DataTypes.StringType, true)
         });
 
         List<Row> rows = Arrays.asList(
@@ -73,11 +74,15 @@ public class CustomerSilverServiceTest {
 
     @Test
     void shouldRunFullBronzeToSilverPipeline() {
-        CustomerSilverService service = new CustomerSilverService(
+        SilverService service = new SilverService(
                 new BronzeReader(),
+                new NullPkDedupValidator(
+                        new String[]{CustomerSchema.CUSTOMER_ID},
+                        new String[]{CustomerSchema.CUSTOMER_ID}
+                ),
                 new CustomerTransformer(),
-                new CustomerValidator(),
-                new SilverWriter()
+                new SilverWriter(),
+                LakehouseTable.CUSTOMERS
         );
 
         service.run(spark);
@@ -88,7 +93,7 @@ public class CustomerSilverServiceTest {
         Dataset<Row> silverDf = spark.read().parquet(SILVER_CUSTOMERS_PATH);
 
         // Null PK dropped, duplicate id collapsed -> 2 distinct customers remain
-        assertEquals(2, silverDf.count());
+        assertEquals(2L, silverDf.count());
 
         Row sp = silverDf.filter("customer_id = 'c001'").first();
         assertEquals("SP", sp.getAs("customer_state"));

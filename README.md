@@ -15,8 +15,8 @@ The **Retail Lakehouse** is a pseudo-production big data pipeline designed to in
 
 - **Decoupled Architecture** — Utilizes Dependency Injection for modular, 100% testable Spark services.
 - **Type Safety** — Domain constants managed via Java Enums (`LakehouseTable`) for robust Parquet writing.
-- **Orchestrator-Ready** — `main` methods are built with explicit OS exit codes (`System.exit(1)`) to trap failures for Apache Airflow.
-- **Test Pyramid** — Thorough unit testing for Readers, Writers, and Services, leaving `main` classes strictly as dependency assembly lines.
+- **Orchestrator-Ready** — `main` methods catch, log, and re-throw as a `RuntimeException`, letting the JVM's non-zero exit code surface the failure to orchestrators (like Airflow) without an explicit `System.exit(1)` call.
+- **Test Pyramid** — Thorough unit testing for Readers, Writers, Validators, Transformers, and Services, leaving `main` classes strictly as dependency assembly lines.
 
 ---
 
@@ -48,7 +48,7 @@ Apache Airflow DAG (Orchestration)
 | Build Tool      | Gradle 8.14                                  |
 | Data Processing | Apache Spark 3.5.x (Spark SQL / DataFrame API) |
 | Storage Format  | Apache Parquet                               |
-| Metadata Store  | Hive Metastore                               |
+| Metadata Store  | Hive Metastore *(Planned)*                   |
 | Orchestration   | Apache Airflow *(Planned)*                   |
 
 ---
@@ -62,9 +62,12 @@ retail-lakehouse/
 │   │   ├── config/       # Configuration loaders
 │   │   ├── constants/    # Enums and file constants
 │   │   ├── factory/      # SparkSessionFactory
-│   │   ├── main/         # Assembly line jobs (CustomerBronzeJob, etc.)
-│   │   ├── reader/       # Spark CSV Readers
-│   │   ├── service/      # Business logic and transformation services
+│   │   ├── main/         # Assembly line jobs (CustomerBronzeJob, CustomerSilverJob, etc.)
+│   │   ├── reader/       # Spark CSV/Parquet Readers (per-entity + generic BronzeReader)
+│   │   ├── schema/       # Explicit Spark schemas + column-name constants per entity
+│   │   ├── service/      # Bronze services + generic Silver-layer SilverService
+│   │   ├── transform/    # DataTransformer interface + entity-specific Transformers
+│   │   ├── validator/    # DataValidator interface, generic NullPkDedupValidator, PaymentValidator
 │   │   └── writer/       # Universal Bronze/Silver/Gold Parquet writers
 │   └── test/             # JUnit 5 tests mirroring the main structure
 ├── data/
@@ -76,8 +79,7 @@ retail-lakehouse/
 ├── sql/                  # DDL and query scripts
 ├── logs/                 # Application execution logs
 ├── ARCHITECTURE_NOTES.md # Architecture Decision Records (ADR)
-├── PROJECT_SUMMARY.md    # High-level project tracker
-└── TESTING_STRATEGY.md   # Rules around testing Spark jobs
+└── PROJECT_SUMMARY.md    # High-level project tracker
 ```
 
 ---
@@ -160,7 +162,7 @@ This project uses **JUnit 5**. Run the full test suite with:
 ./gradlew test
 ```
 
-> **Note:** Due to JVM constraints and the `System.exit(1)` triggers used for orchestrator safety, `main` classes are purposefully excluded from unit testing. See [`TESTING_STRATEGY.md`](TESTING_STRATEGY.md) for details.
+> **Note:** `main` classes are purposefully excluded from unit testing. They're kept as thin dependency-assembly lines (wire up Reader/Validator/Transformer/Writer, call `run()`, handle `SparkSession` lifecycle) with no logic of their own to test — all real logic lives in the Reader/Validator/Transformer/Service classes, which are fully unit tested. On failure, `main` methods catch, log, and re-throw as a `RuntimeException`, letting the JVM's non-zero exit code surface the failure to orchestrators like Airflow.
 
 ---
 
@@ -170,6 +172,5 @@ This project uses **JUnit 5**. Run the full test suite with:
 |---------------------------|------------------------------------------------------|
 | [`ARCHITECTURE_NOTES.md`](ARCHITECTURE_NOTES.md) | Architecture Decision Records (ADR) — why tools and patterns were chosen |
 | [`PROJECT_SUMMARY.md`](PROJECT_SUMMARY.md)       | Sprint tracker, current status, and design decisions |
-| [`TESTING_STRATEGY.md`](TESTING_STRATEGY.md)     | Testing rules and approach for Spark jobs            |
 
 ---

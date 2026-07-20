@@ -1,8 +1,9 @@
 package com.anand.retail.main;
 
+import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.factory.SparkSessionFactory;
 import com.anand.retail.reader.BronzeReader;
-import com.anand.retail.service.PaymentSilverService;
+import com.anand.retail.service.SilverService;
 import com.anand.retail.transform.PaymentTransformer;
 import com.anand.retail.validator.PaymentValidator;
 import com.anand.retail.writer.SilverWriter;
@@ -20,11 +21,12 @@ public class PaymentSilverJob {
         SparkSession spark = SparkSessionFactory.getSparkSession();
 
         try {
-            PaymentSilverService service = new PaymentSilverService(
+            SilverService service = new SilverService(
                     new BronzeReader(),
-                    new PaymentTransformer(),
                     new PaymentValidator(),
-                    new SilverWriter()
+                    new PaymentTransformer(),
+                    new SilverWriter(),
+                    LakehouseTable.PAYMENTS
             );
 
             service.run(spark);

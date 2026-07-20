@@ -1,10 +1,12 @@
 package com.anand.retail.main;
 
+import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.factory.SparkSessionFactory;
 import com.anand.retail.reader.BronzeReader;
-import com.anand.retail.service.OrderSilverService;
+import com.anand.retail.schema.OrderSchema;
+import com.anand.retail.service.SilverService;
 import com.anand.retail.transform.OrderTransformer;
-import com.anand.retail.validator.OrderValidator;
+import com.anand.retail.validator.NullPkDedupValidator;
 import com.anand.retail.writer.SilverWriter;
 import org.apache.spark.sql.SparkSession;
 import org.slf4j.Logger;
@@ -20,18 +22,26 @@ public class OrderSilverJob {
 
         try {
 
-            OrderSilverService service = new OrderSilverService(
+            SilverService service = new SilverService(
                     new BronzeReader(),
+                    new NullPkDedupValidator(
+                            new String[]{
+                                    OrderSchema.ORDER_ID,
+                                    OrderSchema.CUSTOMER_ID,
+                                    OrderSchema.ORDER_PURCHASE_TIMESTAMP
+                            },
+                            new String[]{OrderSchema.ORDER_ID}
+                    ),
                     new OrderTransformer(),
-                    new OrderValidator(),
-                    new SilverWriter()
+                    new SilverWriter(),
+                    LakehouseTable.ORDERS
             );
 
             service.run(spark);
 
             logger.info("Order Silver Fact Job Completed successfully.");
         } catch (Exception e) {
-            logger.error("Order Silver Fact Job failed fatally!");
+            logger.error("Order Silver Fact Job failed fatally!", e);
 
             throw new RuntimeException(e);
         } finally {

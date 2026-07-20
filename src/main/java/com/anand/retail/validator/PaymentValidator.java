@@ -5,7 +5,9 @@ import org.apache.spark.sql.Row;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class PaymentValidator {
+import java.io.Serializable;
+
+public class PaymentValidator implements DataValidator, Serializable {
 
     private static final Logger logger = LoggerFactory.getLogger(PaymentValidator.class);
 

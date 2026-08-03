@@ -1,9 +1,11 @@
 package com.anand.retail.main;
 
+import com.anand.retail.constants.HiveTable;
 import com.anand.retail.constants.LakehouseTable;
 import com.anand.retail.factory.SparkSessionFactory;
 import com.anand.retail.reader.BronzeReader;
 import com.anand.retail.schema.OrderSchema;
+import com.anand.retail.service.HiveRegistrar;
 import com.anand.retail.service.SilverService;
 import com.anand.retail.transform.OrderTransformer;
 import com.anand.retail.validator.NullPkDedupValidator;
@@ -38,6 +40,10 @@ public class OrderSilverJob {
             );
 
             service.run(spark);
+
+            // Register the freshly written Silver output as a queryable
+            // Hive table now that the underlying Parquet data exists.
+            new HiveRegistrar().register(spark, HiveTable.SILVER_ORDERS);
 
             logger.info("Order Silver Fact Job Completed successfully.");
         } catch (Exception e) {

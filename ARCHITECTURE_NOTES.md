@@ -1177,16 +1177,12 @@ current scope.
   the exact right working directory. Verifying through a project-owned
   Job class (`HiveVerificationJob`) that goes through the same
   `SparkSessionFactory` as every other job avoids this entirely.
-- **`SparkSessionFactory`'s singleton guard only checks for `null`, not
-  for "stopped."** Every other test class in this project safely builds
-  its own `SparkSession` and calls `.stop()` in `@AfterAll`. A test that
-  instead calls `SparkSessionFactory.getSparkSession()` must **not**
-  stop it — doing so would leave the cached static field pointing at a
-  dead session, and any later test in the same JVM calling
-  `getSparkSession()` again would receive that unusable dead session
-  with no way to recover, since the null-check alone can't detect a
-  stopped-but-non-null session. `HiveRegistrarTest` deliberately omits
-  the teardown call other tests always include, for this reason.
+- **`SparkSessionFactory` is test-suite resilient.** Because multiple test
+  classes may call `spark.stop()` in their teardown, a simple null-check on
+  the cached session is insufficient (a stopped session is not null). The
+  factory now explicitly checks `sparkSession.sparkContext().isStopped()` and
+  recreates the session if necessary. This prevents `NoSuchElementException`
+  crashes in tests that might otherwise inherit a dead session.
 
 ---
 

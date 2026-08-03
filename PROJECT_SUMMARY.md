@@ -988,12 +988,11 @@ Review findings, fixed before merge:
   done through HiveVerificationJob (going through the project's own
   SparkSessionFactory) rather than a hand-configured shell session.
 
-- SparkSessionFactory's singleton guard only checks for null, not for
-  "stopped" — HiveRegistrarTest deliberately omits the @AfterAll
-  spark.stop() every other test class includes, since stopping the
-  shared factory session would leave any later test's
-  getSparkSession() call returning a dead, unrecoverable session. See
-  ADR-021 Lessons Learned.
+- SparkSessionFactory's singleton guard is robust against test suite
+  teardowns. By explicitly checking sparkSession.sparkContext().isStopped(),
+  the factory safely recreates the session if a previous test class
+  shut it down, preventing NoSuchElementException crashes in subsequent
+  tests.
 
 
 US015

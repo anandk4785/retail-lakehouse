@@ -11,6 +11,7 @@ import org.apache.spark.sql.RowFactory;
 import org.apache.spark.sql.SparkSession;
 import org.apache.spark.sql.types.DataTypes;
 import org.apache.spark.sql.types.StructType;
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -37,15 +38,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * independently-configured session would risk validating behavior
  * nothing in production actually exercises.
  *
- * IMPORTANT — no @AfterAll spark.stop() here, unlike every other test
- * class in this project. SparkSessionFactory treats its SparkSession as
- * a JVM-wide singleton and only checks whether its cached field is
- * null — it has no way to detect that an underlying session was
- * stopped. If this test stopped it, any later test in the same JVM
- * calling SparkSessionFactory.getSparkSession() again would receive a
- * dead, unusable session with no way to recover. This is a deliberate
- * exception to the project's usual per-test teardown convention, not an
- * oversight.
+ * SparkSessionFactory manages the session as a JVM-wide singleton, but is
+ * robust against teardowns and will recreate the session if stopped. We
+ * include an @AfterAll spark.stop() here to align with the rest of the
+ * test suite and ensure clean test boundaries.
  */
 public class HiveRegistrarTest {
 
@@ -115,5 +111,12 @@ public class HiveRegistrarTest {
                 .count();
 
         assertEquals(1, tableCount, "Re-registering should not create a duplicate catalog entry");
+    }
+
+    @AfterAll
+    static void teardown() {
+        if (spark != null) {
+            spark.stop();
+        }
     }
 }

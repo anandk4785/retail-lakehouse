@@ -218,6 +218,8 @@ feature/us011-order-silver-fact
 feature/us012-payment-silver-fact
 
 feature/us013-technical-debt-refactoring
+
+feature/us014-hive-metastore-integration
 ```
 
 ---
@@ -261,7 +263,9 @@ src/main/java/com/anand/retail
 
 │   ├── DatasetConstants
 
-│   └── LakehouseTable
+│   ├── LakehouseTable
+
+│   └── HiveTable
 
 ├── factory
 
@@ -285,7 +289,11 @@ src/main/java/com/anand/retail
 
 │   ├── OrderSilverJob
 
-│   └── PaymentSilverJob
+│   ├── PaymentSilverJob
+
+│   ├── HiveSetupJob
+
+│   └── HiveVerificationJob
 
 ├── reader
 
@@ -319,7 +327,11 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentService
 
-│   └── SilverService
+│   ├── SilverService
+
+│   ├── HiveDatabaseService
+
+│   └── HiveRegistrar
 
 ├── transform
 
@@ -380,7 +392,9 @@ src/test/java/com/anand/retail
 
 │   ├── PaymentServiceTest
 
-│   └── SilverServiceTest
+│   ├── SilverServiceTest
+
+│   └── HiveRegistrarTest
 
 ├── transform
 
@@ -885,7 +899,101 @@ as forward planning and have not yet been created as board issues.
 ```text
 US014
 
-Hive Metastore
+Hive Metastore Integration
+
+Status : DONE
+
+Implemented incrementally, in 7 small tasks rather than one large change:
+
+- SparkSessionFactory: re-enabled enableHiveSupport() (previously
+  commented out due to earlier setup issues), with
+  javax.jdo.option.ConnectionURL pointed at a dedicated
+  hive.metastore.path config key (kept SEPARATE from
+  spark.sql.warehouse.dir — the two control genuinely different things;
+  leaving the metastore path unset would silently default it to the
+  JVM's working directory, violating ADR-008), plus
+  datanucleus.schema.autoCreateAll=true for a fresh embedded Derby
+  metastore, and derby.log relocated under ./logs/ via
+  derby.stream.error.file
+
+- HiveDatabaseService: creates the bronze/silver/gold Hive databases
+  (CREATE DATABASE IF NOT EXISTS ... LOCATION ...), reusing the
+  existing bronze.path/silver.path/gold.path config keys
+
+- HiveTable (enum): centralizes table-to-Hive-database metadata,
+  composing LakehouseTable rather than redeclaring table names —
+  SILVER_CUSTOMERS, SILVER_PRODUCTS, SILVER_ORDERS, SILVER_PAYMENTS
+
+- HiveRegistrar: registers existing Silver Parquet as external/
+  unmanaged Hive tables (CREATE TABLE IF NOT EXISTS ... USING PARQUET
+  LOCATION '...' — schema auto-discovered from Parquet, no manual
+  column declaration needed)
+
+- All four *SilverJob classes call HiveRegistrar.register(spark,
+  HiveTable.SILVER_*) immediately after SilverService.run(spark)
+
+- HiveSetupJob: one-time job that creates the three databases
+
+- HiveVerificationJob: ad-hoc diagnostic job (SHOW DATABASES, SHOW
+  TABLES, DESCRIBE TABLE EXTENDED, SELECT), run through the project's
+  own SparkSessionFactory rather than a separately-configured
+  spark-shell session
+
+- HiveRegistrarTest: classical, state-based integration test (real
+  SparkSessionFactory session, real database, real SilverWriter output,
+  real Spark SQL queries against the result) — covers both the
+  register-then-query path and idempotent re-registration
+
+Design notes:
+
+- Embedded Derby metastore chosen deliberately for this stage, over a
+  standalone Metastore + Postgres — zero extra infrastructure, and every
+  concept demonstrated (databases, external tables, SHOW/DESCRIBE
+  semantics) carries over unchanged to a standalone Metastore later.
+  Embedded Derby's single-JVM-lock limitation (only one process can hold
+  the metastore at a time) is accepted as a known constraint for this
+  stage, not a hidden gap — it's the concrete reason a Docker-based
+  standalone Metastore + Postgres is the planned future migration. See
+  ADR-021.
+
+- HiveRegistrar creates EXTERNAL/unmanaged tables (LOCATION specified
+  explicitly, pointing at Silver's existing storage path outside
+  spark.sql.warehouse.dir) rather than Spark-managed tables. This
+  respects SilverWriter's existing ownership of the Parquet files —
+  DROP TABLE removes only the catalog entry, never the underlying data.
+  See ADR-021.
+
+- A midway detour considered renaming the databases to
+  retail_bronze/retail_silver/retail_gold, and building a HiveWriter
+  utility for writing Spark-managed tables for future Gold jobs
+  (including a managed-table verification round-trip). Both were
+  explicitly discarded: the rename was unnecessary (plain bronze/
+  silver/gold kept), and HiveWriter was premature — no Gold job exists
+  yet to build it against, and doing so now would repeat the same
+  premature-abstraction risk already reasoned through for validators in
+  ADR-018, just for a writer. See ADR-021's "Rejected Direction"
+  section — this is recorded deliberately, not silently dropped, so the
+  codebase doesn't carry dead, unverified code.
+
+Review findings, fixed before merge:
+
+- spark.sql.warehouse.dir and javax.jdo.option.ConnectionURL are
+  separate settings that are easy to conflate — the first controls
+  managed table DATA location, the second controls the metastore
+  CATALOG's own location. Setting only the first still leaves
+  metastore_db/ landing at the JVM's working directory by default.
+
+- spark-shell does not automatically use this project's Hive config —
+  it creates its own independent default SparkSession. Verification is
+  done through HiveVerificationJob (going through the project's own
+  SparkSessionFactory) rather than a hand-configured shell session.
+
+- SparkSessionFactory's singleton guard only checks for null, not for
+  "stopped" — HiveRegistrarTest deliberately omits the @AfterAll
+  spark.stop() every other test class includes, since stopping the
+  shared factory session would leave any later test's
+  getSparkSession() call returning a dead, unrecoverable session. See
+  ADR-021 Lessons Learned.
 
 
 US015
@@ -946,6 +1054,9 @@ Monitoring
 | Mockito-based PaymentSilverServiceTest reviewed but not adopted | Rejected | No other entity has a service-level test, and Mockito is not otherwise a project dependency; adopting it for one entity only would be an undocumented inconsistency |
 | US-013 generic SilverService and NullPkDedupValidator | Accepted | Four Silver pipelines proved the shared orchestration shape; Customer/Product/Order share configurable null-filter/dedup behavior while Payment keeps a dedicated validator for domain-specific rules |
 | Schema classes expose column-name constants, referenced by job wiring and tests instead of string literals | Accepted | A misspelled literal fails silently at Spark runtime; a misspelled constant fails at compile time — one source of truth per column name |
+| Embedded Derby Hive metastore for now, standalone Metastore + Postgres deferred | Accepted | Zero extra infrastructure needed to demonstrate real Hive concepts now; single-JVM-lock limitation is the concrete, felt reason to migrate later rather than a hidden gap |
+| HiveRegistrar creates external/unmanaged tables (explicit LOCATION), not managed tables | Accepted | Respects SilverWriter's existing ownership of Parquet files; DROP TABLE should not be able to delete Silver data out from under the writer that owns it |
+| retail_-prefixed database rename and HiveWriter managed-table utility | Rejected | Rename was unnecessary; HiveWriter would be built against no real Gold job to prove it against — same premature-abstraction risk as ADR-018, deferred until a real Gold job exists |
 
 ---
 
@@ -964,23 +1075,21 @@ BUILD SUCCESSFUL
 
 Current Sprint
 
-Sprint 3 — COMPLETE
+Sprint 4
 
 
 Current User Story
 
-None — US013 (Technical Debt / Refactoring) closed; Sprint 3 (Silver
-Layer: Customer, Product, Order, Payment, plus the US-013 consolidation)
-is fully complete.
+None — US014 (Hive Metastore Integration) closed; all four Silver
+tables (customers, products, orders, payments) are registered in the
+Hive Metastore and verified queryable via Spark SQL.
 
 
 Next User Story
 
-US014
+US015
 
-Hive Metastore (Sprint 4) — Docker becomes justified here (Hive
-Metastore's backing RDBMS); see prior discussion on deferring Docker
-until this story.
+Sales Analytics (Sprint 4)
 ```
 
 ---
@@ -1018,9 +1127,6 @@ until this story.
 | 2026-07-02 | Added intentional-duplication design decision to decision table (ADR-018) |
 | 2026-07-02 | Flagged Sprint 4 US-013 numbering collision with new Technical Debt story |
 | 2026-07-02 | Advanced Current Status to Sprint 3 / US011, Next US012     |
-| 2026-07-03 | Resolved US-013 numbering: US-013 is now Technical Debt / Refactoring; Sprint 4 renumbered US013→US014, US014→US015, US015→US016; Sprint 5 renumbered US016→US017, US017→US018, US018→US019 |
-| 2026-07-03 | Added US-013 Technical Debt / Refactoring story detail (planned scope) to Sprint 3 |
-| 2026-07-03 | Noted Kanban board currently only has issues through US-012; Sprint 4/5 remain document-only forward planning |
 | 2026-07-04 | US011 Order Silver Fact marked DONE                         |
 | 2026-07-04 | Added OrderSilverJob/OrderSilverService/OrderTransformer/OrderValidator and their tests to Current Folder Structure |
 | 2026-07-04 | Added Fact-vs-Dimension Transformer scope design decision to decision table |
@@ -1036,5 +1142,9 @@ until this story.
 | 2026-07-20 | US013 Technical Debt / Refactoring marked DONE; Sprint 3 marked COMPLETE |
 | 2026-07-20 | Added schema column-name constants design decision to decision table |
 | 2026-07-20 | Advanced Current Status: no current story (Sprint 3 complete), Next US014 (Hive Metastore, Sprint 4) |
+| 2026-07-27 | US014 Hive Metastore Integration marked DONE                |
+| 2026-07-27 | Added HiveDatabaseService/HiveRegistrar/HiveTable/HiveSetupJob/HiveVerificationJob and HiveRegistrarTest to Current Folder Structure |
+| 2026-07-27 | Added embedded-Derby, external-table, and rejected retail_/HiveWriter design decisions to decision table |
+| 2026-07-27 | Advanced Current Status to Sprint 4, no current story, Next US015 (Sales Analytics) |
 
 ---

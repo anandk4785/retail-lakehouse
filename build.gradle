@@ -20,6 +20,9 @@ dependencies {
     testImplementation 'org.junit.jupiter:junit-jupiter:5.13.4'
     // Required for Gradle 8.x + JUnit 5 tests to run reliably
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+    // Hive support for Spark SQL
+    implementation 'org.apache.spark:spark-hive_2.12:3.5.6'
 }
 
 java {
@@ -47,7 +50,7 @@ def sparkJvmArgs = [
 ]
 
 application {
-    mainClass = 'com.anand.retail.main.PaymentSilverJob'
+    mainClass = 'com.anand.retail.main.HiveVerificationJob'
     // Apply the JVM args when we run the app
     applicationDefaultJvmArgs = sparkJvmArgs
 }

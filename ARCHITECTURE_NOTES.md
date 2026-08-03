@@ -782,9 +782,9 @@ service.
 ## Consequences
 
 - `ProductValidator` / `OrderValidator` / `PaymentValidator` and their
-  `Transformer` counterparts intentionally contained near-identical
-  null-PK/dedup logic until US-013 gave the project enough real Silver
-  pipelines to generalize from.
+  `Transformer` counterparts contained near-identical null-PK/dedup
+  logic until US-013 gave the project enough real Silver pipelines to
+  generalize from.
 - `ProductSilverService` (and its Order/Payment equivalents) intentionally
   duplicated the orchestration shape of `CustomerSilverService` almost line
   for line until US-013.
@@ -799,10 +799,6 @@ service.
   filters (`payment_type != "not_defined"`, `payment_value >= 0`) are
   domain-specific and should not be forced into the generic null/dedup
   validator.
-- Entity-specific Transformer classes remain by design. They implement
-  `DataTransformer`, but their transformation logic differs meaningfully
-  by table type and is not a generalization candidate (see ADR-017,
-  ADR-019, and ADR-020).
 - The old entity-specific Silver service classes
   (`CustomerSilverService`, `ProductSilverService`, `OrderSilverService`,
   `PaymentSilverService`) and the generic-replaced Customer/Product/Order
@@ -810,13 +806,6 @@ service.
   `OrderValidator`, and their tests) have been deleted as the closing
   step of US-013. `PaymentValidator` and `PaymentValidatorTest` remain,
   per the decision above.
-- US-013 is reserved for this Technical Debt / Refactoring story. Since
-  the Kanban board only has issues created through US-012, the previously
-  planned US-013 (Hive Metastore) and later Sprint 4/5 stories shift up by
-  one: Hive Metastore → US-014, Sales Analytics → US-015, Top Customers
-  Report → US-016, Airflow DAG → US-017, Daily ETL Pipeline → US-018,
-  Monitoring → US-019. See `PROJECT_SUMMARY.md` Sprint 3–5 for the
-  current numbering.
 
 ---
 
@@ -1010,11 +999,202 @@ Product's and Order's pattern.
 
 ---
 
+# ADR-021 : Hive Metastore Integration (US-014) — Embedded Derby, External-Table Registration, and a Discarded Managed-Table Detour
+
+## Status: Accepted ✅
+
+## Context
+
+US-014 introduces Hive Metastore integration on top of the completed
+Silver layer (US-009–US-013). The story was deliberately broken into
+small, incremental tasks rather than one large change:
+
+1. Re-enable `enableHiveSupport()` in `SparkSessionFactory` (previously
+   commented out due to earlier setup issues)
+2. Configure the embedded metastore and warehouse locations correctly
+3. Create the `bronze`/`silver`/`gold` Hive databases
+4. Introduce a `HiveTable` enum to centralize table-to-database metadata
+5. Implement `HiveRegistrar` to register existing Silver Parquet as
+   external Hive tables
+6. Wire one Silver job (`CustomerSilverJob`) end-to-end, verify manually,
+   then roll the same pattern out to the rest
+7. Verify everything via Spark SQL
+
+A midway detour considered a different requirements framing entirely —
+`retail_`-prefixed database names, and a `HiveWriter` utility for writing
+Spark-*managed* tables (no explicit `LOCATION`, Spark owns the file
+lifecycle) intended for future Gold jobs. Both were explicitly discarded
+before implementation was carried further; see "Rejected Direction"
+below.
+
+## Decision
+
+**1. Embedded Derby metastore, not standalone.** `SparkSessionFactory`
+re-enables `enableHiveSupport()` with `javax.jdo.option.ConnectionURL`
+pointed at `<data.root>/metastore_db` (kept as its own config key,
+`hive.metastore.path`, separate from `spark.sql.warehouse.dir` — the two
+control genuinely different things: warehouse.dir is where *managed
+table data* lives, ConnectionURL is where the metastore *catalog itself*
+lives, and leaving the latter unset defaults it to the JVM's working
+directory regardless of warehouse.dir, which would violate ADR-008).
+`datanucleus.schema.autoCreateAll=true` is required for a fresh embedded
+Derby metastore to bootstrap its own schema tables on first connection.
+Derby's own log file is relocated via
+`System.setProperty("derby.stream.error.file", "./logs/derby.log")`,
+with `./logs/` created defensively first since Derby does not reliably
+create missing parent directories for it.
+
+This is explicitly a learning-stage choice: embedded Derby only allows a
+single JVM to hold the metastore lock at a time, which becomes a real
+constraint once external tools (beeline, a JDBC client, Spark Thrift
+Server) need concurrent access alongside the ETL jobs themselves. A
+Docker-based standalone Hive Metastore + Postgres is the planned future
+migration — see "Future Migration" below.
+
+**2. Databases named plainly (`bronze`/`silver`/`gold`), not
+`retail_`-prefixed.** Considered and explicitly rejected — see below.
+
+**3. `HiveTable` enum composes `LakehouseTable`, doesn't duplicate it.**
+`HiveTable` maps each Silver `LakehouseTable` to its Hive database name
+(currently always `"silver"`) and exposes `getFullyQualifiedName()` for
+SQL. It intentionally does not redeclare table/directory names — those
+already have exactly one source of truth in `LakehouseTable` (ADR-013/
+ADR-016).
+
+**4. `HiveRegistrar` creates external/unmanaged tables via
+`CREATE TABLE IF NOT EXISTS <db>.<table> USING PARQUET LOCATION '...'`,**
+not Hive-style `CREATE EXTERNAL TABLE (col1 type, ...) STORED AS
+PARQUET`. Since Parquet embeds its own schema, Spark auto-discovers
+columns — no manual schema declaration needed, consistent with the same
+reasoning already applied to `BronzeReader`/`SilverWriter` (ADR-016).
+Because `LOCATION` is specified explicitly, and Silver's storage path
+(`<data.root>/silver/...`) sits outside `spark.sql.warehouse.dir`
+entirely, the resulting tables are genuinely external/unmanaged:
+`DROP TABLE` removes only the catalog entry, never the underlying
+Parquet files written by `SilverWriter`.
+
+`HiveRegistrar` resolves its base path via
+`ConfigLoader.get(table.getHiveDatabase() + ".path")` — reusing the same
+`bronze.path`/`silver.path`/`gold.path` keys `HiveDatabaseService`
+already reads to create the databases themselves — rather than
+hardcoding `"silver.path"`. This means it works unchanged once `gold`
+entries exist in `HiveTable` later, without needing a rewrite, while
+still not speculatively building anything Gold-specific today.
+
+**5. Every `*SilverJob` calls `HiveRegistrar.register(spark, HiveTable.SILVER_*)`
+immediately after `SilverService.run(spark)`,** so registration always
+happens after the Parquet it points at actually exists.
+
+## Rejected Direction: `retail_`-Prefixed Databases and a Managed-Table `HiveWriter`
+
+Midway through US-014, an alternative requirements framing proposed:
+
+- Renaming the Hive databases to `retail_bronze`/`retail_silver`/
+  `retail_gold`
+- Building a `HiveWriter` utility that writes DataFrames directly as
+  Spark-*managed* tables (`.saveAsTable(...)`, no `LOCATION`) for future
+  Gold jobs, together with a verification job proving managed-table
+  create/query round-trips work
+
+Both were explicitly discarded. The database rename was rejected outright
+as unnecessary — the plain `bronze`/`silver`/`gold` names already in use
+were kept. The `HiveWriter`/managed-table work was implemented and then
+discarded once it became clear it belonged to a different, not-yet-started
+story: no Gold job exists yet to prove a Gold-specific writer against, and
+building one now would be speculative — the same premature-abstraction
+concern already reasoned through in ADR-018, just for a writer instead of
+a validator. If/when a real Gold job is built, a managed-table writer
+utility remains a reasonable thing to introduce at that point, informed by
+what that job actually needs — not designed in advance of it.
+
+## Reason
+
+- Embedded Derby is the right choice *for learning*: it requires zero
+  extra infrastructure, and every concept it teaches (databases, external
+  vs. managed tables, `SHOW`/`DESCRIBE` semantics) carries over unchanged
+  to a standalone Metastore later. The single-JVM-lock limitation is a
+  feature for this stage, not a bug — it makes the reason for eventually
+  migrating to a real Metastore concrete and felt, rather than taken on
+  faith.
+- Registering Silver as external tables (rather than writing them as
+  Hive-managed from the start) respects the medallion architecture's
+  existing ownership boundaries: `SilverWriter` already owns the Parquet
+  files and their lifecycle (ADR-016); the Hive catalog should describe
+  that data, not compete with `SilverWriter` for ownership of it.
+- Discarding the managed-table detour rather than merging it half-built
+  keeps the codebase honest about what's actually been proven — an
+  unused `HiveWriter` sitting in the repo with no caller would be exactly
+  the kind of dead, unverified code this project has otherwise avoided.
+
+## Consequences
+
+- `HiveDatabaseService`, `HiveTable`, `HiveRegistrar`, `HiveSetupJob`,
+  and `HiveVerificationJob` are the permanent artifacts of US-014.
+  `HiveWriter` and any managed-table verification code from the
+  discarded direction are not part of the codebase.
+- All four `*SilverJob` classes now register their output automatically;
+  `HiveSetupJob` (databases) and `HiveVerificationJob` (ad-hoc
+  `SHOW`/`DESCRIBE`/`SELECT` checks) remain as small, permanent
+  diagnostic utilities alongside the core ETL jobs.
+- `HiveRegistrarTest` is a classical, state-based integration test
+  (real `SparkSessionFactory` session, real database, real `SilverWriter`
+  output, real Spark SQL queries against the result) — consistent with
+  the testing philosophy already established in ADR-020, not a Mockito
+  test.
+
+## Future Migration (not yet started)
+
+When the project moves off embedded Derby to a Docker-based standalone
+Hive Metastore + Postgres: `docker-compose.yml` gains `hive-metastore`
+and `postgres` services; `SparkSessionFactory`'s
+`javax.jdo.option.ConnectionURL` config is replaced with
+`hive.metastore.uris=thrift://localhost:9083`; schema initialization
+moves to a one-time `schematool -initSchema` step against Postgres
+instead of `datanucleus.schema.autoCreateAll`. `HiveTable`,
+`HiveRegistrar`, `HiveDatabaseService`, and every `*SilverJob` are
+expected to require zero changes, since none of them talk to Derby
+specifics directly — only `SparkSessionFactory` does. This migration is
+deliberately deferred; embedded Derby is sufficient for the project's
+current scope.
+
+## Lessons Learned (recorded for interview prep)
+
+- **`spark.sql.warehouse.dir` and `javax.jdo.option.ConnectionURL` are
+  separate settings that are easy to conflate.** The first controls
+  where managed table *data* lives; the second controls where the Derby
+  metastore *catalog* itself lives. Setting only the first still leaves
+  `metastore_db/`/`derby.log` landing at the JVM's working directory by
+  default, silently violating ADR-008's centralized-storage decision in
+  a way that's easy to miss because it looks like it should already be
+  fixed.
+- **`spark-shell` does not automatically use this project's Hive
+  configuration.** It creates its own default `SparkSession`, entirely
+  independent of `SparkSessionFactory`/`ConfigLoader` — running raw SQL
+  in `spark-shell` (which itself requires `spark.sql(...)`, not bare SQL,
+  since the REPL evaluates Scala) would show an empty default catalog,
+  not this project's `bronze`/`silver`/`gold` databases, unless every
+  relevant `--conf` flag is passed by hand and the shell is launched from
+  the exact right working directory. Verifying through a project-owned
+  Job class (`HiveVerificationJob`) that goes through the same
+  `SparkSessionFactory` as every other job avoids this entirely.
+- **`SparkSessionFactory`'s singleton guard only checks for `null`, not
+  for "stopped."** Every other test class in this project safely builds
+  its own `SparkSession` and calls `.stop()` in `@AfterAll`. A test that
+  instead calls `SparkSessionFactory.getSparkSession()` must **not**
+  stop it — doing so would leave the cached static field pointing at a
+  dead session, and any later test in the same JVM calling
+  `getSparkSession()` again would receive that unusable dead session
+  with no way to recover, since the null-check alone can't detect a
+  stopped-but-non-null session. `HiveRegistrarTest` deliberately omits
+  the teardown call other tests always include, for this reason.
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:
 
-* Hive warehouse location
+* Standalone Hive Metastore migration (Docker-based)
 * Partitioning strategy
 * Spark configuration tuning
 * Logging framework
@@ -1035,7 +1215,7 @@ CSV
 
 ↓
 
-Specific Reader (Explicit Schema)
+Reader
 
 ↓
 
@@ -1053,21 +1233,17 @@ Parquet
 ```
 Bronze Parquet
 
-↓ 
+↓
 
-Universal Reader
+Validated Data
 
 ↓
 
-Validator
+Transformations
 
 ↓
 
-Transformer
-
-↓
-
-Universal Parquet Writer
+Partitioned Parquet
 ```
 
 ### Gold
@@ -1114,5 +1290,7 @@ Dashboards
 | 2026-07-06 | Restored missing "Future Architecture Decisions" section header |
 | 2026-07-19 | Added ADR-012 Addendum : Schema column-name constants (typo-safety at compile time), referenced from Silver job wiring and validator/service tests |
 | 2026-07-19 | Updated ADR-018 Consequences: retired entity-specific Silver services and Customer/Product/Order validators (+ tests) confirmed deleted, closing US-013 |
+| 2026-07-27 | Added ADR-021 : Hive Metastore Integration (US-014) — embedded Derby, external-table registration via HiveRegistrar, discarded retail_-prefix/HiveWriter detour, and Future Migration notes for a Docker-based standalone Metastore |
+| 2026-07-27 | Updated "Future Architecture Decisions" to reflect the standalone Hive Metastore migration as the next planned item |
 
 ---

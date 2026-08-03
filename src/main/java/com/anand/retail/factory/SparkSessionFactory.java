@@ -21,7 +21,7 @@ public final class SparkSessionFactory {
 
     public static SparkSession getSparkSession() {
 
-        if (sparkSession == null) {
+        if (sparkSession == null || sparkSession.sparkContext().isStopped()) {
 
             logger.info(
                     "Creating SparkSession");

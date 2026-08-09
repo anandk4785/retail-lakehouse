@@ -14,6 +14,9 @@ public final class DatasetConstants {
     public static final String PAYMENTS =
             "payments.csv";
 
+    public static final String ORDER_ITEMS =
+            "order_items.csv";
+
 
     private DatasetConstants() {
 

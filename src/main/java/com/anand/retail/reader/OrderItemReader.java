@@ -13,7 +13,7 @@ import java.nio.file.Paths;
 
 public class OrderItemReader {
 
-    private static final Logger logger = LoggerFactory.getLogger(OrderItemReader.class.getName());
+    private static final Logger logger = LoggerFactory.getLogger(OrderItemReader.class);
 
     public Dataset<Row> readOrderItem(SparkSession spark) {
         logger.info("Reading order items dataset");

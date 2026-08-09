@@ -29,7 +29,7 @@ public class OrderItemBronzeJob {
             BronzeWriter bronzeWriter = new BronzeWriter();
             bronzeWriter.writeTable(orderItemDf, LakehouseTable.ORDER_ITEMS);
 
-            logger.info("Order Item Bronze Job Completed Sucessfully");
+            logger.info("Order Item Bronze Job Completed Successfully");
         }   catch (Exception e) {
             logger.error("Order Item Bronze Job failed fatally!", e);
             throw new RuntimeException(e);

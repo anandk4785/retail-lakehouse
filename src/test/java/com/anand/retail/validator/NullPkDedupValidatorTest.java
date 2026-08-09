@@ -1,6 +1,7 @@
 package com.anand.retail.validator;
 
 import com.anand.retail.schema.CustomerSchema;
+import com.anand.retail.schema.OrderItemSchema;
 import com.anand.retail.schema.OrderSchema;
 import com.anand.retail.schema.ProductSchema;
 import org.apache.spark.sql.Dataset;
@@ -127,5 +128,42 @@ public class NullPkDedupValidatorTest {
 
         assertEquals(2L, resultDf.count(),
                 "Order validation should require order_id, customer_id, and purchase timestamp, then deduplicate by order_id");
+    }
+
+    @Test
+    void shouldValidateOrderItemRowsUsingCompositeDeduplicateKey() {
+        NullPkDedupValidator validator = new NullPkDedupValidator(
+                new String[]{
+                        OrderItemSchema.ORDER_ID,
+                        OrderItemSchema.ORDER_ITEM_ID,
+                        OrderItemSchema.PRODUCT_ID
+                },
+                new String[]{
+                        OrderItemSchema.ORDER_ID,
+                        OrderItemSchema.ORDER_ITEM_ID
+                }
+        );
+
+        StructType schema = new StructType()
+                .add(OrderItemSchema.ORDER_ID, DataTypes.StringType, true)
+                .add(OrderItemSchema.ORDER_ITEM_ID, DataTypes.LongType, true)
+                .add(OrderItemSchema.PRODUCT_ID, DataTypes.StringType, true);
+
+        List<Row> data = Arrays.asList(
+                // Two different items in the same order (should BOTH survive)
+                RowFactory.create("O-001", 1L, "P-001"),
+                RowFactory.create("O-001", 2L, "P-002"),
+                // Duplicate of the first item (should be dropped)
+                RowFactory.create("O-001", 1L, "P-001"),
+                // Null required column (should be dropped)
+                RowFactory.create("O-002", null, "P-003")
+        );
+
+        Dataset<Row> resultDf = validator.validate(
+                spark.createDataFrame(data, schema)
+        );
+
+        assertEquals(2L, resultDf.count(),
+                "Order item validation should survive multiple items per order but deduplicate exact order_id/order_item_id pairs");
     }
 }

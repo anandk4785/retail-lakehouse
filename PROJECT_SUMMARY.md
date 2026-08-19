@@ -283,6 +283,8 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentBronzeJob
 
+│   ├── OrderItemBronzeJob
+
 │   ├── CustomerSilverJob
 
 │   ├── ProductSilverJob
@@ -290,6 +292,8 @@ src/main/java/com/anand/retail
 │   ├── OrderSilverJob
 
 │   ├── PaymentSilverJob
+
+│   ├── OrderItemSilverJob
 
 │   ├── HiveSetupJob
 
@@ -305,6 +309,8 @@ src/main/java/com/anand/retail
 
 │   ├── PaymentReader
 
+│   ├── OrderItemReader
+
 │   └── BronzeReader
 
 ├── schema
@@ -315,7 +321,9 @@ src/main/java/com/anand/retail
 
 │   ├── ProductSchema
 
-│   └── PaymentSchema
+│   ├── PaymentSchema
+
+│   └── OrderItemSchema
 
 ├── service
 
@@ -326,6 +334,8 @@ src/main/java/com/anand/retail
 │   ├── ProductService
 
 │   ├── PaymentService
+
+│   ├── OrderItemService
 
 │   ├── SilverService
 
@@ -343,7 +353,9 @@ src/main/java/com/anand/retail
 
 │   ├── OrderTransformer
 
-│   └── PaymentTransformer
+│   ├── PaymentTransformer
+
+│   └── OrderItemTransformer
 
 ├── validator
 
@@ -380,6 +392,8 @@ src/test/java/com/anand/retail
 
 │   ├── PaymentReaderTest
 
+│   ├── OrderItemReaderTest
+
 │   └── BronzeReaderTest
 
 ├── service
@@ -391,6 +405,8 @@ src/test/java/com/anand/retail
 │   ├── ProductServiceTest
 
 │   ├── PaymentServiceTest
+
+│   ├── OrderItemServiceTest
 
 │   ├── SilverServiceTest
 
@@ -404,7 +420,9 @@ src/test/java/com/anand/retail
 
 │   ├── OrderTransformerTest
 
-│   └── PaymentTransformerTest
+│   ├── PaymentTransformerTest
+
+│   └── OrderItemTransformerTest
 
 ├── validator
 
@@ -1000,6 +1018,101 @@ US015
 
 Sales Analytics
 
+Tracked as one parent GitHub issue with two sub-issues, rather than as
+two separate top-level stories (US-015/US-016) — avoids the Sprint 4/5
+renumbering churn the project went through during the US-013 saga; the
+existing US015 -> US016 -> ... numbering stays untouched. Each phase
+still gets its own branch and its own squash-merged PR. See ADR-022.
+
+--- Phase 1: Order Items Bronze + Silver Ingestion ---
+
+Status : DONE
+
+Implemented:
+
+- DatasetConstants.ORDER_ITEMS, LakehouseTable.ORDER_ITEMS,
+  HiveTable.SILVER_ORDER_ITEMS
+
+- OrderItemSchema (column constants from day one)
+
+- OrderItemReader, OrderItemService, OrderItemBronzeJob (Bronze,
+  mirrors Customer/Product/Order/Payment exactly)
+
+- OrderItemTransformer (intentionally a no-op — order_items has no
+  string-casing fields to standardize, and business metrics like
+  total_item_value belong in Gold, not Silver; still implements
+  DataTransformer, Serializable and logs explicitly, consistent with
+  every other Transformer)
+
+- OrderItemSilverJob: wires the existing NullPkDedupValidator with
+  requiredColumns=[ORDER_ID, ORDER_ITEM_ID, PRODUCT_ID],
+  deduplicateColumns=[ORDER_ID, ORDER_ITEM_ID] — a composite dedup key,
+  handled with ZERO changes to NullPkDedupValidator itself
+
+- OrderItemReaderTest, OrderItemServiceTest, OrderItemTransformerTest
+
+- NullPkDedupValidatorTest: added
+  shouldValidateOrderItemRowsUsingCompositeDeduplicateKey, proving
+  multiple line items per order survive while true
+  (order_id, order_item_id) duplicates collapse
+
+Design notes:
+
+- No new Validator class was needed for a 5th entity — the clearest,
+  most concrete payoff yet of the US-013 consolidation:
+  NullPkDedupValidator's asymmetric required/dedup column design
+  (proven on Order's 3-required/1-dedup case) generalized cleanly to
+  order_items' 3-required/2-dedup composite-key case without
+  modification. See ADR-022.
+
+- PRODUCT_ID is required (non-dedup) even though it isn't part of the
+  composite key, because Phase 2's Gold aggregation needs to join
+  order_items to products by product_id — a null there would silently
+  break that join later. Same "validate what downstream actually
+  needs" principle as ADR-019's OrderValidator reasoning. See ADR-022.
+
+Review findings, fixed before merge:
+
+- OrderItemTransformer was initially missing implements Serializable
+  and had no logging at all (not even for the no-op case) — both
+  brought in line with every other Transformer's established
+  convention.
+
+- OrderItemBronzeJob had a typo ("Sucessfully") in its completion log
+  message, corrected.
+
+- The new NullPkDedupValidatorTest case initially used raw string
+  literals instead of OrderItemSchema constants, inconsistent with the
+  other three tests in the same file — corrected to use the constants.
+
+--- Phase 2: Sales Analytics Gold Layer ---
+
+Status : NOT STARTED
+
+Planned scope:
+
+- SalesAnalyticsService: aggregation logic, querying already-registered
+  Hive tables (silver.order_items JOIN silver.orders JOIN
+  silver.products) via Spark SQL rather than manually resolving Parquet
+  paths — the actual payoff of US-014's registration work
+
+- gold.monthly_product_sales: revenue/freight/item-count/avg-price
+  grouped by month + product category (one well-scoped Gold table,
+  not a sprawling star schema)
+
+- HiveWriter: revisited from the US-014 "Rejected Direction" (ADR-021)
+  now that a real Gold job exists to design it against, rather than
+  guessing ahead of need
+
+- SalesAnalyticsGoldJob (assembly-line main class)
+
+- SalesAnalyticsServiceTest (aggregation math against synthetic
+  Silver-shaped data) + an integration test proving the managed-table
+  round-trip through HiveWriter
+
+- Verification via SHOW TABLES IN gold / DESCRIBE TABLE EXTENDED /
+  SELECT, same pattern as US-014
+
 
 US016
 
@@ -1057,6 +1170,8 @@ Monitoring
 | Embedded Derby Hive metastore for now, standalone Metastore + Postgres deferred | Accepted | Zero extra infrastructure needed to demonstrate real Hive concepts now; single-JVM-lock limitation is the concrete, felt reason to migrate later rather than a hidden gap |
 | HiveRegistrar creates external/unmanaged tables (explicit LOCATION), not managed tables | Accepted | Respects SilverWriter's existing ownership of Parquet files; DROP TABLE should not be able to delete Silver data out from under the writer that owns it |
 | retail_-prefixed database rename and HiveWriter managed-table utility | Rejected | Rename was unnecessary; HiveWriter would be built against no real Gold job to prove it against — same premature-abstraction risk as ADR-018, deferred until a real Gold job exists |
+| US-015 tracked as one parent issue with Phase 1/Phase 2 sub-issues, not two top-level stories | Accepted | Avoids the Sprint 4/5 renumbering churn from the US-013 saga; each phase still gets its own branch and squash-merged PR |
+| NullPkDedupValidator wired for order_items' composite key with zero code changes | Accepted | Proves the US-013 generalization holds on a 5th entity it wasn't explicitly designed around — asymmetric 3-required/2-dedup configuration |
 
 ---
 
@@ -1080,16 +1195,15 @@ Sprint 4
 
 Current User Story
 
-None — US014 (Hive Metastore Integration) closed; all four Silver
-tables (customers, products, orders, payments) are registered in the
-Hive Metastore and verified queryable via Spark SQL.
+US015 — Phase 1 (Order Items Bronze + Silver Ingestion) DONE; all five
+Silver tables (customers, products, orders, payments, order_items) are
+now registered in the Hive Metastore and verified queryable via Spark
+SQL. Build, tests, and manual run all confirmed green.
 
 
 Next User Story
 
-US015
-
-Sales Analytics (Sprint 4)
+US015 — Phase 2 (Sales Analytics Gold Layer)
 ```
 
 ---
@@ -1146,5 +1260,9 @@ Sales Analytics (Sprint 4)
 | 2026-07-27 | Added HiveDatabaseService/HiveRegistrar/HiveTable/HiveSetupJob/HiveVerificationJob and HiveRegistrarTest to Current Folder Structure |
 | 2026-07-27 | Added embedded-Derby, external-table, and rejected retail_/HiveWriter design decisions to decision table |
 | 2026-07-27 | Advanced Current Status to Sprint 4, no current story, Next US015 (Sales Analytics) |
+| 2026-08-02 | US015 Phase 1 (Order Items Bronze + Silver Ingestion) marked DONE; documented Phase 1/Phase 2 sub-issue structure (ADR-022) |
+| 2026-08-02 | Added OrderItemSchema/Reader/Service/Transformer/BronzeJob/SilverJob and their tests to Current Folder Structure |
+| 2026-08-02 | Added sub-issue-structure and composite-key-generalization design decisions to decision table |
+| 2026-08-02 | Advanced Current Status: US015 Phase 1 DONE, Next US015 Phase 2 (Sales Analytics Gold Layer) |
 
 ---

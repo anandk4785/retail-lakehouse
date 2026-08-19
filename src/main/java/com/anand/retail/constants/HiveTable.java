@@ -15,7 +15,8 @@ public enum HiveTable {
     SILVER_CUSTOMERS(LakehouseTable.CUSTOMERS, "silver"),
     SILVER_PRODUCTS(LakehouseTable.PRODUCTS, "silver"),
     SILVER_ORDERS(LakehouseTable.ORDERS, "silver"),
-    SILVER_PAYMENTS(LakehouseTable.PAYMENTS, "silver");
+    SILVER_PAYMENTS(LakehouseTable.PAYMENTS, "silver"),
+    SILVER_ORDER_ITEMS(LakehouseTable.ORDER_ITEMS, "silver");
 
     private final LakehouseTable lakehouseTable;
     private final String hiveDatabase;

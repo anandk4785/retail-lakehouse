@@ -4,7 +4,8 @@ public enum LakehouseTable {
     CUSTOMERS("customers"),
     ORDERS("orders"),
     PRODUCTS("products"),
-    PAYMENTS("payments");
+    PAYMENTS("payments"),
+    ORDER_ITEMS("order_items");
 
     private final String directoryName;
 

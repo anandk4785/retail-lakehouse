@@ -1177,16 +1177,125 @@ current scope.
   the exact right working directory. Verifying through a project-owned
   Job class (`HiveVerificationJob`) that goes through the same
   `SparkSessionFactory` as every other job avoids this entirely.
-- **`SparkSessionFactory`'s singleton guard only checks for `null`, not
+- **`SparkSessionFactory`'s singleton guard only checked for `null`, not
   for "stopped."** Every other test class in this project safely builds
   its own `SparkSession` and calls `.stop()` in `@AfterAll`. A test that
-  instead calls `SparkSessionFactory.getSparkSession()` must **not**
+  instead called `SparkSessionFactory.getSparkSession()` had to **not**
   stop it — doing so would leave the cached static field pointing at a
   dead session, and any later test in the same JVM calling
   `getSparkSession()` again would receive that unusable dead session
-  with no way to recover, since the null-check alone can't detect a
-  stopped-but-non-null session. `HiveRegistrarTest` deliberately omits
-  the teardown call other tests always include, for this reason.
+  with no way to recover, since the null-check alone couldn't detect a
+  stopped-but-non-null session. `HiveRegistrarTest` originally worked
+  around this by deliberately omitting the teardown call other tests
+  always include.
+  **Update:** this was subsequently found to cause real
+  `NoSuchElementException` failures across the test suite (not just a
+  theoretical risk), and was fixed at the source —
+  `getSparkSession()` now checks
+  `sparkSession == null || sparkSession.sparkContext().isStopped()`
+  before deciding whether to create a new session. The workaround in
+  `HiveRegistrarTest` is no longer strictly necessary, though leaving it
+  as-is is harmless.
+
+---
+
+# ADR-022 : US-015 Phase 1 — Order Items Ingestion, and Proving the US-013 Generalization on a Composite Key It Wasn't Designed Around
+
+## Status: Accepted ✅
+
+## Context
+
+US-015 ("Sales Analytics") requires product-level revenue metrics, which
+need `order_items` — a table this project had never ingested (ADR-003's
+dataset scope covered only Customers, Orders, Products, and Payments).
+Rather than one large story, US-015 was split into two phases tracked as
+GitHub sub-issues under a single parent issue (see "Sub-Issue Structure"
+below): Phase 1 (this ADR) brings `order_items` through Bronze and Silver
+using the exact established pattern; Phase 2 builds the actual Gold
+aggregation on top of it.
+
+`order_items` has no single-column natural key. Per the Olist schema, an
+order with multiple products has one row per line item, distinguished by
+`order_item_id` — structurally identical in shape to Payment's
+`payment_sequential` split (ADR-020), just for products instead of
+payment methods.
+
+## Decision
+
+**1. Full medallion pipeline added for a 5th entity**, following the
+exact shape established for Customer/Product/Order/Payment:
+`DatasetConstants.ORDER_ITEMS`, `LakehouseTable.ORDER_ITEMS`,
+`OrderItemSchema` (with column constants from day one, per the ADR-012
+addendum — no retrofit needed this time), `OrderItemReader`,
+`OrderItemService`, `OrderItemBronzeJob` for Bronze; `OrderItemTransformer`,
+`OrderItemSilverJob` for Silver; `HiveTable.SILVER_ORDER_ITEMS` for
+registration.
+
+**2. `NullPkDedupValidator` handles the composite key without any code
+changes.** `OrderItemSilverJob` wires it with `requiredColumns =
+[ORDER_ID, ORDER_ITEM_ID, PRODUCT_ID]` and `deduplicateColumns =
+[ORDER_ID, ORDER_ITEM_ID]` — a 3-required/2-dedup asymmetric
+configuration, an even more general shape than Order's 3-required/
+1-dedup case it was originally built to prove out during US-013. No new
+`OrderItemValidator` class was needed.
+
+**3. `PRODUCT_ID` is a required (non-dedup) column,** even though it
+isn't part of the composite key. Phase 2 needs to join `order_items` to
+`products` by `product_id`; a null there would silently produce a broken
+join or a garbage aggregate downstream. Same reasoning ADR-019
+established for `OrderValidator` requiring `order_purchase_timestamp` —
+a Validator's null-checks should match what the pipeline genuinely
+depends on, not just the dedup key.
+
+**4. `OrderItemTransformer` is intentionally a no-op** (returns its input
+unchanged, logged explicitly rather than silently). `order_items` has no
+string-casing fields needing standardization (unlike Customer's city/
+state), and derived business metrics (e.g. `total_item_value = price +
+freight_value`) belong in Gold per ADR-004's own layer definitions, not
+Silver. `OrderItemTransformer` still implements `DataTransformer,
+Serializable` and logs on every call, consistent with every other
+Transformer in the project — a no-op transform is a legitimate design
+choice, but that doesn't exempt the class from the project's standard
+observability and serialization conventions.
+
+## Sub-Issue Structure
+
+US-015 is tracked as one parent GitHub issue with two sub-issues (Phase 1:
+Order Items Ingestion; Phase 2: Sales Analytics Gold Layer), rather than
+as two independent top-level issues (US-015/US-016). This avoids the
+Sprint 4/5 renumbering churn the project went through more than once
+during the US-013 saga — the sprint tracker's existing `US015 → US016 →
+...` numbering stays untouched, while each phase still gets its own
+branch, its own PR, and its own squash-merge to `main`
+(`feature/us015-order-items-ingestion`,
+`feature/us015-sales-analytics-gold`).
+
+## Reason
+
+- Extending the medallion pattern to a 5th entity with zero new
+  architectural decisions (beyond the composite-key wiring, which
+  `NullPkDedupValidator` already supported) is itself evidence the
+  US-013 refactor generalized correctly — this is the first real
+  external validation of that abstraction since it was built.
+- Validating `product_id` non-null now, ahead of Phase 2 actually needing
+  it, follows the same "check the real data before locking in a rule"
+  discipline established in ADR-020, rather than discovering the gap
+  only once the Gold join silently drops rows later.
+
+## Consequences
+
+- No new `Validator` class was required for a 5th entity — a concrete,
+  demonstrable payoff of the US-013 consolidation, worth calling out
+  directly in interview discussion of that refactor.
+- `OrderItemTransformer` sets a precedent: a legitimately empty
+  Transformer is acceptable when an entity genuinely needs no
+  standardization, as long as it still satisfies the same structural
+  contract (interface, `Serializable`, explicit logging) as every
+  entity that does.
+- Phase 2 can now assume `silver.order_items` is queryable via Spark SQL
+  (registered through the same `HiveRegistrar` path as every other
+  Silver table), with a non-null `product_id` guaranteed for the
+  `products` join.
 
 ---
 
@@ -1292,5 +1401,7 @@ Dashboards
 | 2026-07-19 | Updated ADR-018 Consequences: retired entity-specific Silver services and Customer/Product/Order validators (+ tests) confirmed deleted, closing US-013 |
 | 2026-07-27 | Added ADR-021 : Hive Metastore Integration (US-014) — embedded Derby, external-table registration via HiveRegistrar, discarded retail_-prefix/HiveWriter detour, and Future Migration notes for a Docker-based standalone Metastore |
 | 2026-07-27 | Updated "Future Architecture Decisions" to reflect the standalone Hive Metastore migration as the next planned item |
+| 2026-08-02 | Updated ADR-021 Lessons Learned: SparkSessionFactory's null-only singleton guard was found to cause real NoSuchElementException failures and was fixed at the source (isStopped() check added) |
+| 2026-08-02 | Added ADR-022 : US-015 Phase 1 — Order Items Ingestion, proving NullPkDedupValidator's composite-key generalization on a 5th entity, and the Phase 1/Phase 2 sub-issue structure |
 
 ---

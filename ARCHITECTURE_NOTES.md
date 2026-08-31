@@ -1299,6 +1299,110 @@ branch, its own PR, and its own squash-merge to `main`
 
 ---
 
+# ADR-023 : US-015 Phase 2 — Sales Analytics Gold Layer, and Closing the Loop on HiveWriter
+
+## Status: Accepted ✅
+
+## Context
+
+Phase 2 builds the first real Gold-layer output: `gold.monthly_product_sales`,
+aggregating `silver.order_items` × `silver.orders` × `silver.products`.
+This is also the point ADR-021 explicitly deferred to — a `HiveWriter`
+utility for Spark-managed tables was designed and then discarded during
+US-014 specifically because no real Gold job existed yet to design it
+against. Two design questions came up implementing Phase 2 for real:
+
+1. Should `SalesAnalyticsService` read Hive itself, or accept DataFrames
+   as parameters?
+2. Should `HiveWriter` take a `HiveTable` enum value, or plain strings?
+
+## Decision
+
+**1. `SalesAnalyticsService` owns Hive I/O directly**, via a
+`run(SparkSession)` entry point that reads `silver.order_items`/
+`silver.orders`/`silver.products` through Spark SQL and writes the
+result through `HiveWriter` — mirroring `SilverService`'s own shape
+(ADR-014) rather than splitting I/O from aggregation logic into
+separate classes.
+
+A DataFrames-in design (`aggregate(Dataset<Row> orderItems,
+Dataset<Row> orders, Dataset<Row> products)`, no `SparkSession` at all)
+was implemented first, specifically so `SalesAnalyticsServiceTest`
+could be a fast, isolated unit test — small synthetic DataFrames in,
+assert the aggregate out, the same shape as every `*TransformerTest` in
+the project. It was reconsidered and replaced with the Hive-coupled
+version below, because it broke from `SilverService`'s own established
+precedent without a strong enough reason to justify the inconsistency:
+every other Service in this codebase owns its I/O, and the Job class is
+pure DI wiring. Consistency with the codebase's own pattern was judged
+more valuable than a marginally faster test for one class.
+
+**2. `HiveWriter.writeManagedTable(Dataset<Row> df, String database,
+String tableName, SaveMode mode)`** — plain strings, `SaveMode` as a
+parameter. Deliberately does **not** depend on `HiveTable`/
+`LakehouseTable`. A `HiveTable`-coupled version was implemented first
+(`writeManagedTable(df, HiveTable table)`), which required adding
+`LakehouseTable.MONTHLY_PRODUCT_SALES("monthly_product_sales")` purely
+to satisfy `HiveTable`'s constructor — even though `monthly_product_sales`
+was never ingested, has no CSV, no Bronze step, and no real directory
+for `LakehouseTable.getDirectoryName()` to resolve. This was reviewed
+and reverted before merge: `LakehouseTable` exists to identify
+physically ingested, Bronze/Silver-backed entities (ADR-013/ADR-016);
+forcing a derived Gold aggregate into that model conflates two
+genuinely different concepts, and every future Gold table would need
+its own fake `LakehouseTable` entry to keep using `HiveWriter` the same
+way.
+
+**3. Revenue counted only for delivered orders** — `WHERE
+o.is_delivered = true`, reusing the flag `OrderTransformer` already
+computes (ADR-019) rather than re-deriving it from `order_status`
+inline. A canceled or in-flight order's line-item price would otherwise
+inflate the revenue figure.
+
+**4. Aggregate metrics**: `item_count`, `product_revenue`,
+`freight_revenue`, `total_sales_amount` (= `product_revenue +
+freight_revenue`), `average_item_price` — grain
+`(purchase_year, purchase_month, product_category_name)`. One
+well-scoped table, not a sprawling star schema.
+
+## Reason
+
+- `SalesAnalyticsService`'s I/O placement was a case where "generically
+  cleaner" (isolated unit test) and "consistent with this codebase"
+  (matches `SilverService`) pointed in different directions. Consistency
+  won, on the reasoning that a future reader comparing `SalesAnalyticsService`
+  to `SilverService` should see the same shape, not have to learn a
+  second convention for Gold Services specifically.
+- Reversing the `HiveWriter`/`HiveTable` coupling before merge, rather
+  than after, avoided shipping a `LakehouseTable` entry that would have
+  needed explaining to every future reader wondering why a derived Gold
+  table has a "directory name."
+- Reusing `is_delivered` instead of re-checking `order_status` here
+  keeps the "delivered" definition in exactly one place — if that
+  definition ever changes, it changes in `OrderTransformer`, not in
+  every downstream Gold job that happens to care about delivery status.
+
+## Consequences
+
+- `SalesAnalyticsServiceTest` is a real integration test (real
+  `SparkSessionFactory` session, real Silver tables seeded via
+  `SilverWriter` and registered via `HiveRegistrar`, real Gold
+  managed-table write verified via Spark SQL) — the same style as
+  `HiveRegistrarTest`/`SilverServiceTest`, not a fast isolated unit
+  test. This is an accepted, deliberate cost of Decision 1, not an
+  oversight.
+- `HiveTable`/`LakehouseTable` remain scoped strictly to Bronze/Silver
+  entities. Future Gold tables use `HiveWriter` with plain strings, the
+  same as `monthly_product_sales` — no enum entry required per table.
+- `HiveVerificationJob`'s throwaway `gold.hive_writer_verification` demo
+  table from US-014 is no longer created or referenced; verification now
+  checks the real `gold.monthly_product_sales` output.
+- This closes ADR-021's deferred `HiveWriter` decision: the utility now
+  exists, informed by a real Gold job's actual shape rather than
+  speculation ahead of need.
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:
@@ -1403,5 +1507,6 @@ Dashboards
 | 2026-07-27 | Updated "Future Architecture Decisions" to reflect the standalone Hive Metastore migration as the next planned item |
 | 2026-08-02 | Updated ADR-021 Lessons Learned: SparkSessionFactory's null-only singleton guard was found to cause real NoSuchElementException failures and was fixed at the source (isStopped() check added) |
 | 2026-08-02 | Added ADR-022 : US-015 Phase 1 — Order Items Ingestion, proving NullPkDedupValidator's composite-key generalization on a 5th entity, and the Phase 1/Phase 2 sub-issue structure |
+| 2026-08-09 | Added ADR-023 : US-015 Phase 2 — Sales Analytics Gold Layer, closing ADR-021's deferred HiveWriter decision, SalesAnalyticsService's SilverService-shaped I/O, and the delivered-only revenue scope |
 
 ---

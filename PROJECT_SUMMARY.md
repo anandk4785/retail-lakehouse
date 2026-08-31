@@ -220,6 +220,10 @@ feature/us012-payment-silver-fact
 feature/us013-technical-debt-refactoring
 
 feature/us014-hive-metastore-integration
+
+feature/us015-order-items-ingestion
+
+feature/us015-sales-analytics-gold
 ```
 
 ---
@@ -297,7 +301,9 @@ src/main/java/com/anand/retail
 
 │   ├── HiveSetupJob
 
-│   └── HiveVerificationJob
+│   ├── HiveVerificationJob
+
+│   └── SalesAnalyticsGoldJob
 
 ├── reader
 
@@ -341,7 +347,9 @@ src/main/java/com/anand/retail
 
 │   ├── HiveDatabaseService
 
-│   └── HiveRegistrar
+│   ├── HiveRegistrar
+
+│   └── SalesAnalyticsService
 
 ├── transform
 
@@ -369,7 +377,9 @@ src/main/java/com/anand/retail
 
     ├── BronzeWriter
 
-    └── SilverWriter
+    ├── SilverWriter
+
+    └── HiveWriter
 
 
 src/test/java/com/anand/retail
@@ -410,7 +420,9 @@ src/test/java/com/anand/retail
 
 │   ├── SilverServiceTest
 
-│   └── HiveRegistrarTest
+│   ├── HiveRegistrarTest
+
+│   └── SalesAnalyticsServiceTest
 
 ├── transform
 
@@ -1087,31 +1099,71 @@ Review findings, fixed before merge:
 
 --- Phase 2: Sales Analytics Gold Layer ---
 
-Status : NOT STARTED
+Status : DONE
 
-Planned scope:
+Implemented:
 
-- SalesAnalyticsService: aggregation logic, querying already-registered
-  Hive tables (silver.order_items JOIN silver.orders JOIN
-  silver.products) via Spark SQL rather than manually resolving Parquet
-  paths — the actual payoff of US-014's registration work
+- HiveWriter: writes Gold DataFrames as Spark-managed tables
+  (writeManagedTable(df, database, tableName, mode) — no LOCATION
+  specified, Spark owns the data beneath warehouse.dir). Deliberately
+  takes plain database/tableName strings rather than a HiveTable enum
+  value — HiveTable/LakehouseTable exist to identify already-ingested,
+  directory-backed entities, and a derived Gold aggregate has no such
+  physical dataset behind it. See ADR-023.
 
-- gold.monthly_product_sales: revenue/freight/item-count/avg-price
-  grouped by month + product category (one well-scoped Gold table,
-  not a sprawling star schema)
+- SalesAnalyticsService: mirrors SilverService's shape (ADR-014) —
+  owns both the Hive read (via Spark SQL against the already-registered
+  silver.order_items / silver.orders / silver.products tables) and the
+  HiveWriter write, with a run(SparkSession) entry point and
+  buildMonthlyProductSales(SparkSession) as the aggregation itself.
+  Revenue recognized only for delivered orders (orders.is_delivered,
+  reusing the flag OrderTransformer already computes — ADR-019 — rather
+  than re-deriving it from order_status here).
 
-- HiveWriter: revisited from the US-014 "Rejected Direction" (ADR-021)
-  now that a real Gold job exists to design it against, rather than
-  guessing ahead of need
+- gold.monthly_product_sales: grain (purchase_year, purchase_month,
+  product_category_name); metrics item_count, product_revenue,
+  freight_revenue, total_sales_amount, average_item_price
 
 - SalesAnalyticsGoldJob (assembly-line main class)
 
-- SalesAnalyticsServiceTest (aggregation math against synthetic
-  Silver-shaped data) + an integration test proving the managed-table
-  round-trip through HiveWriter
+- SalesAnalyticsServiceTest: a real integration test (real
+  SparkSessionFactory session, real Silver tables seeded via
+  SilverWriter and registered via HiveRegistrar, real Gold managed-table
+  write verified via Spark SQL afterward) rather than a fast isolated
+  unit test — deliberate, not a shortcut; see Design notes below.
+  Combines the aggregation-correctness proof and the HiveWriter
+  managed-table round-trip proof in one test, plus a second test
+  proving SaveMode.Overwrite doesn't accumulate rows on rerun.
 
-- Verification via SHOW TABLES IN gold / DESCRIBE TABLE EXTENDED /
-  SELECT, same pattern as US-014
+- HiveVerificationJob updated: the throwaway
+  gold.hive_writer_verification demo table from US-014 is gone, replaced
+  with real checks against gold.monthly_product_sales; row-count checks
+  added for all five Silver tables (previously only silver.customers)
+
+Design notes:
+
+- SalesAnalyticsService reads directly from the Hive catalog rather than
+  accepting DataFrames as parameters. An earlier draft split I/O from
+  aggregation logic (Service takes three DataFrames in, no SparkSession
+  at all) specifically to keep the test fast and isolated, the same
+  shape as every *TransformerTest. That draft was reconsidered: it broke
+  from SilverService's own established precedent, where the Service
+  owns I/O and the Job class is pure DI wiring. The Hive-coupled version
+  was kept instead, accepting the larger, slower integration test as the
+  deliberate cost of following the codebase's own established pattern
+  rather than a generically "cleaner" one it doesn't actually use
+  elsewhere. See ADR-023.
+
+- HiveWriter was implemented once as HiveTable-coupled (requiring a new,
+  ADR-021-warned-against LakehouseTable.MONTHLY_PRODUCT_SALES entry with
+  no real directory behind it), reviewed, and reverted to plain
+  database/tableName strings before merge. See ADR-023.
+
+Review findings, fixed before merge:
+
+- HiveWriter's SaveMode was initially hardcoded to Overwrite; parameterized
+  instead, since the class is explicitly meant for reuse across future
+  Gold jobs that may need different write semantics.
 
 
 US016
@@ -1172,6 +1224,8 @@ Monitoring
 | retail_-prefixed database rename and HiveWriter managed-table utility | Rejected | Rename was unnecessary; HiveWriter would be built against no real Gold job to prove it against — same premature-abstraction risk as ADR-018, deferred until a real Gold job exists |
 | US-015 tracked as one parent issue with Phase 1/Phase 2 sub-issues, not two top-level stories | Accepted | Avoids the Sprint 4/5 renumbering churn from the US-013 saga; each phase still gets its own branch and squash-merged PR |
 | NullPkDedupValidator wired for order_items' composite key with zero code changes | Accepted | Proves the US-013 generalization holds on a 5th entity it wasn't explicitly designed around — asymmetric 3-required/2-dedup configuration |
+| SalesAnalyticsService owns Hive I/O directly (SilverService shape), not DataFrames-in for isolated unit testing | Accepted | Matches the codebase's own established Service pattern (ADR-014) rather than a generically "cleaner" split it doesn't use elsewhere; accepts a slower integration test as the known cost |
+| HiveWriter takes plain database/tableName strings, not a HiveTable enum value | Accepted | HiveTable/LakehouseTable identify already-ingested, directory-backed entities; a derived Gold aggregate has none — avoids inventing a fake LakehouseTable entry with no real directory |
 
 ---
 
@@ -1195,15 +1249,17 @@ Sprint 4
 
 Current User Story
 
-US015 — Phase 1 (Order Items Bronze + Silver Ingestion) DONE; all five
-Silver tables (customers, products, orders, payments, order_items) are
-now registered in the Hive Metastore and verified queryable via Spark
-SQL. Build, tests, and manual run all confirmed green.
+None — US015 (Sales Analytics: Phase 1 Order Items Ingestion + Phase 2
+Sales Analytics Gold Layer) fully closed. gold.monthly_product_sales is
+live, queryable, and verified via HiveVerificationJob. Build, tests, and
+manual run all confirmed green.
 
 
 Next User Story
 
-US015 — Phase 2 (Sales Analytics Gold Layer)
+US016
+
+Top Customers Report (Sprint 4)
 ```
 
 ---
@@ -1264,5 +1320,9 @@ US015 — Phase 2 (Sales Analytics Gold Layer)
 | 2026-08-02 | Added OrderItemSchema/Reader/Service/Transformer/BronzeJob/SilverJob and their tests to Current Folder Structure |
 | 2026-08-02 | Added sub-issue-structure and composite-key-generalization design decisions to decision table |
 | 2026-08-02 | Advanced Current Status: US015 Phase 1 DONE, Next US015 Phase 2 (Sales Analytics Gold Layer) |
+| 2026-08-09 | US015 Phase 2 (Sales Analytics Gold Layer) marked DONE; US015 fully closed |
+| 2026-08-09 | Added HiveWriter/SalesAnalyticsService/SalesAnalyticsGoldJob/SalesAnalyticsServiceTest to Current Folder Structure |
+| 2026-08-09 | Added SalesAnalyticsService-shape and HiveWriter-signature design decisions to decision table (ADR-023) |
+| 2026-08-09 | Advanced Current Status: no current story (US015 fully closed), Next US016 (Top Customers Report) |
 
 ---

@@ -224,6 +224,8 @@ feature/us014-hive-metastore-integration
 feature/us015-order-items-ingestion
 
 feature/us015-sales-analytics-gold
+
+feature/us016-top-customers-report
 ```
 
 ---
@@ -303,7 +305,9 @@ src/main/java/com/anand/retail
 
 │   ├── HiveVerificationJob
 
-│   └── SalesAnalyticsGoldJob
+│   ├── SalesAnalyticsGoldJob
+
+│   └── TopCustomersGoldJob
 
 ├── reader
 
@@ -349,7 +353,9 @@ src/main/java/com/anand/retail
 
 │   ├── HiveRegistrar
 
-│   └── SalesAnalyticsService
+│   ├── SalesAnalyticsService
+
+│   └── TopCustomersService
 
 ├── transform
 
@@ -422,7 +428,9 @@ src/test/java/com/anand/retail
 
 │   ├── HiveRegistrarTest
 
-│   └── SalesAnalyticsServiceTest
+│   ├── SalesAnalyticsServiceTest
+
+│   └── TopCustomersServiceTest
 
 ├── transform
 
@@ -1169,6 +1177,57 @@ Review findings, fixed before merge:
 US016
 
 Top Customers Report
+
+Status : DONE
+
+Implemented:
+
+- TopCustomersService: dedicated class, not a subclass or shared
+  abstraction with SalesAnalyticsService, though both mirror
+  SilverService's I/O-owning shape (run(SparkSession) +
+  buildTopCustomers(SparkSession), HiveWriter for the write). Two Gold
+  reports isn't enough evidence to know what a shared Gold-Service
+  abstraction should look like — same ADR-018 reasoning applied to
+  Validators before US-013 had four real examples. See ADR-024.
+
+- gold.top_customers: one row per customer (customer_id, customer_city,
+  customer_state, order_count, total_spent, avg_order_value,
+  customer_rank via RANK() OVER ORDER BY total_spent DESC). Produces the
+  FULL ranked list, not a hardcoded "top N" — which N counts as "top" is
+  a downstream reporting decision. Same delivered-only revenue scope as
+  gold.monthly_product_sales (orders.is_delivered).
+
+- TopCustomersGoldJob (assembly-line main class)
+
+- TopCustomersServiceTest: real integration test, same shape as
+  SalesAnalyticsServiceTest (real SparkSessionFactory session, real
+  Silver tables seeded and registered, real Gold managed-table write
+  verified via Spark SQL) — ranking correctness plus a rerun test
+  proving SaveMode.Overwrite doesn't accumulate rows
+
+- HiveRegistrar bug found and fixed: CREATE TABLE IF NOT EXISTS was
+  silently serving stale cached schema once a table was already
+  registered in the Derby catalog. Fixed to DROP TABLE IF EXISTS +
+  CREATE TABLE on every register() call, re-syncing the catalog schema
+  to whatever is actually on disk. See ADR-024 for full root-cause
+  analysis and the two rejected fixes (CREATE OR REPLACE TABLE doesn't
+  work for external tables in Spark 3.5.x; an isolated per-test
+  metastore was rejected for bypassing the real SilverWriter/
+  HiveRegistrar code paths entirely).
+
+- Documented the SparkSessionFactory-in-tests convention (when to use
+  the shared factory session vs. a plain .builder() session, and why
+  factory-based tests must not call spark.stop()) as an addendum to
+  ADR-007 — this had been an implicit rule since HiveRegistrarTest, now
+  written down.
+
+Design notes:
+
+- The HiveRegistrar fix touches exactly one file. No test class needed
+  to change (HiveRegistrarTest, SalesAnalyticsServiceTest,
+  TopCustomersServiceTest all remained as originally written) once the
+  actual root cause was fixed at its source, rather than working around
+  the symptom in each test's setup code.
 ```
 
 ---
@@ -1226,6 +1285,10 @@ Monitoring
 | NullPkDedupValidator wired for order_items' composite key with zero code changes | Accepted | Proves the US-013 generalization holds on a 5th entity it wasn't explicitly designed around — asymmetric 3-required/2-dedup configuration |
 | SalesAnalyticsService owns Hive I/O directly (SilverService shape), not DataFrames-in for isolated unit testing | Accepted | Matches the codebase's own established Service pattern (ADR-014) rather than a generically "cleaner" split it doesn't use elsewhere; accepts a slower integration test as the known cost |
 | HiveWriter takes plain database/tableName strings, not a HiveTable enum value | Accepted | HiveTable/LakehouseTable identify already-ingested, directory-backed entities; a derived Gold aggregate has none — avoids inventing a fake LakehouseTable entry with no real directory |
+| TopCustomersService is its own class, not shared with SalesAnalyticsService | Accepted | Two Gold reports isn't enough evidence to know what a genuinely shared Gold-Service abstraction should look like — same reasoning as ADR-018 |
+| HiveRegistrar re-syncs catalog schema via DROP TABLE IF EXISTS + CREATE TABLE on every register() call | Accepted | CREATE TABLE IF NOT EXISTS silently served stale cached schema once a table was already registered — a real production correctness gap, not just a test artifact |
+| CREATE OR REPLACE TABLE fix for HiveRegistrar | Rejected | Spark 3.5.x only supports it for managed tables; HiveRegistrar deliberately creates external/unmanaged tables |
+| Isolated per-test-class Derby metastore and storage | Rejected | Would have bypassed the real SilverWriter/HiveRegistrar code paths entirely, hand-rolls Hive config independently of SparkSessionFactory, and would never have caught the actual bug |
 
 ---
 
@@ -1244,22 +1307,23 @@ BUILD SUCCESSFUL
 
 Current Sprint
 
-Sprint 4
+Sprint 4 — COMPLETE
 
 
 Current User Story
 
-None — US015 (Sales Analytics: Phase 1 Order Items Ingestion + Phase 2
-Sales Analytics Gold Layer) fully closed. gold.monthly_product_sales is
-live, queryable, and verified via HiveVerificationJob. Build, tests, and
-manual run all confirmed green.
+None — US016 (Top Customers Report) closed; Sprint 4 (US014 Hive
+Metastore Integration, US015 Sales Analytics, US016 Top Customers
+Report) is fully complete. gold.monthly_product_sales and
+gold.top_customers are both live, queryable, and verified via
+HiveVerificationJob.
 
 
 Next User Story
 
-US016
+US017
 
-Top Customers Report (Sprint 4)
+Airflow DAG (Sprint 5)
 ```
 
 ---
@@ -1324,5 +1388,11 @@ Top Customers Report (Sprint 4)
 | 2026-08-09 | Added HiveWriter/SalesAnalyticsService/SalesAnalyticsGoldJob/SalesAnalyticsServiceTest to Current Folder Structure |
 | 2026-08-09 | Added SalesAnalyticsService-shape and HiveWriter-signature design decisions to decision table (ADR-023) |
 | 2026-08-09 | Advanced Current Status: no current story (US015 fully closed), Next US016 (Top Customers Report) |
+| 2026-08-16 | US016 Top Customers Report marked DONE                       |
+| 2026-08-16 | Added TopCustomersService/TopCustomersGoldJob/TopCustomersServiceTest to Current Folder Structure |
+| 2026-08-16 | Fixed HiveRegistrar stale-schema bug (DROP TABLE IF EXISTS + CREATE TABLE, replacing CREATE TABLE IF NOT EXISTS) — see ADR-024 |
+| 2026-08-16 | Documented SparkSessionFactory-in-tests convention as ADR-007 Addendum |
+| 2026-08-16 | Added dedicated-Service, HiveRegistrar-fix, and two rejected-alternative design decisions to decision table (ADR-024) |
+| 2026-08-16 | Advanced Current Status: Sprint 4 COMPLETE, no current story, Next US017 (Airflow DAG, Sprint 5) |
 
 ---

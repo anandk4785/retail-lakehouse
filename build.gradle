@@ -50,7 +50,7 @@ def sparkJvmArgs = [
 ]
 
 application {
-    mainClass = 'com.anand.retail.main.SalesAnalyticsGoldJob'
+    mainClass = 'com.anand.retail.main.TopCustomersGoldJob'
     // Apply the JVM args when we run the app
     applicationDefaultJvmArgs = sparkJvmArgs
 }

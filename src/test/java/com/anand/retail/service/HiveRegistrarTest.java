@@ -97,8 +97,9 @@ public class HiveRegistrarTest {
 
     @Test
     void shouldBeIdempotentWhenRegisteredTwice() {
-        // CREATE TABLE IF NOT EXISTS should make re-registration safe —
-        // e.g. re-running a *SilverJob a second time shouldn't fail.
+        // DROP TABLE IF EXISTS followed by CREATE makes re-registration safe
+        // (external tables don't support CREATE OR REPLACE, so we drop and recreate).
+        // Re-running a *SilverJob a second time shouldn't fail.
         HiveRegistrar registrar = new HiveRegistrar();
 
         assertDoesNotThrow(() -> {

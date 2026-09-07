@@ -34,8 +34,13 @@ public class HiveRegistrar implements Serializable {
         logger.info("Registering Hive Table: [{}] at Location: [{}]",
                 fullQualifiedName, locationUri);
 
+        // Drop the table if it exists first. Since these are external tables
+        // (defined with LOCATION), Spark's CREATE OR REPLACE TABLE is not supported.
+        // Instead, we drop and recreate to make the registration idempotent.
+        spark.sql("DROP TABLE IF EXISTS " + fullQualifiedName);
+
         spark.sql(
-                "CREATE TABLE IF NOT EXISTS " + fullQualifiedName +
+                "CREATE TABLE " + fullQualifiedName +
                         " USING PARQUET LOCATION '" + locationUri + "'"
         );
 

@@ -361,6 +361,40 @@ new SparkSessionFactory()
 - Consistent Spark initialization
 - Similar to enterprise Spark projects
 
+## Addendum (US-016, 2026-08-16): SparkSessionFactory in Tests
+
+Most test classes build their own throwaway session
+(`SparkSession.builder()...master("local[1]")...getOrCreate()`) and stop
+it in `@AfterAll`. A small number of integration tests
+(`HiveRegistrarTest`, `SalesAnalyticsServiceTest`,
+`TopCustomersServiceTest`) instead call
+`SparkSessionFactory.getSparkSession()` directly. The rule for which to
+use:
+
+- **Needs the Hive catalog** (creates/reads databases or tables, calls
+  `.saveAsTable(...)`, queries `silver.*`/`gold.*`) →
+  `SparkSessionFactory.getSparkSession()`. A plain `.builder()` session
+  has no `.enableHiveSupport()` and no Hive config at all; duplicating
+  that config inline in a test would let it drift from what
+  `SparkSessionFactory` actually does in production — precisely what
+  this ADR exists to prevent.
+- **Pure DataFrame logic, no catalog interaction**
+  (`*ValidatorTest`, `*TransformerTest`, `*ReaderTest`) → keep the
+  existing `.builder()...getOrCreate()` + `@AfterAll spark.stop()`
+  pattern. Routing these through the factory would add Hive/Derby
+  bootstrap overhead for no benefit.
+
+**Tests using the factory must NOT call `spark.stop()` in `@AfterAll`.**
+`SparkSessionFactory` caches one session for the whole JVM; stopping the
+shared instance would break any later test in the same run that calls
+`getSparkSession()` again. Since `SparkSessionFactory.getSparkSession()`
+now checks `sparkContext().isStopped()` (see ADR-021 Lessons Learned),
+this is no longer a correctness requirement — a later call would
+correctly detect the stopped session and rebuild it — but it remains
+the right default: reusing one shared, already-Hive-bootstrapped session
+across all Hive-integration tests keeps the suite faster than
+re-bootstrapping embedded Derby per test class.
+
 ---
 
 # ADR-008 : Centralized Warehouse Storage Inside Environment Directory
@@ -1403,6 +1437,125 @@ well-scoped table, not a sprawling star schema.
 
 ---
 
+# ADR-024 : US-016 Top Customers Report — Dedicated Service, and the HiveRegistrar Stale-Schema Bug
+
+## Status: Accepted ✅
+
+## Context
+
+US-016 builds a second Gold table, `gold.top_customers`, ranking
+customers by delivered-order spend (`silver.order_items` ×
+`silver.orders` × `silver.customers`). Building it surfaced two separate
+design questions:
+
+1. Should `TopCustomersService` extend or share an abstraction with
+   `SalesAnalyticsService`, the only other Gold Service that exists?
+2. While writing `TopCustomersServiceTest`, `silver.orders` intermittently
+   failed to resolve `customer_id` in the JOIN condition, depending on
+   which of `SalesAnalyticsServiceTest`/`TopCustomersServiceTest` ran
+   first in a given test JVM.
+
+## Decision
+
+**1. `TopCustomersService` is its own class**, not a subclass of or
+shared abstraction with `SalesAnalyticsService`, even though both mirror
+`SilverService`'s I/O-owning shape (ADR-023/ADR-014). Two Gold reports
+is not enough evidence to know what a genuinely shared Gold-Service
+abstraction should look like — the same reasoning ADR-018 already
+applied to Validators before US-013 had four real Silver pipelines to
+generalize from.
+
+**2. `HiveRegistrar` bug found and fixed: `CREATE TABLE IF NOT EXISTS`
+silently serves stale cached schema.** Root cause: `SalesAnalyticsServiceTest`
+and `TopCustomersServiceTest` each seed `silver.orders` with a different
+fixture schema (one has `purchase_year`/`purchase_month`, the other has
+`customer_id`). Whichever test class registered `silver.orders` first in
+a given JVM "won" — `CREATE TABLE IF NOT EXISTS` is a no-op once the
+table already exists in the Derby catalog, so the *other* test's query
+failed against a schema that didn't match what was actually written to
+Parquet moments earlier.
+
+This wasn't only a test-ordering artifact — it's a real production
+correctness gap. If `OrderTransformer` ever adds a new derived column
+and `OrderSilverJob` runs again, `HiveRegistrar.register(...)` would see
+`silver.orders` already registered and silently keep serving the old
+schema forever, with no error, until someone manually intervened.
+
+Fixed in `HiveRegistrar` itself:
+```java
+spark.sql("DROP TABLE IF EXISTS " + fullyQualifiedName);
+spark.sql(
+        "CREATE TABLE " + fullyQualifiedName +
+                " USING PARQUET LOCATION '" + locationUri + "'"
+);
+```
+`DROP TABLE` on an external table removes only the catalog entry, never
+the underlying Parquet — safe by the class's own existing contract. This
+re-syncs the catalog schema to whatever is actually on disk on every
+`register()` call, for every entity, not just the two that happened to
+collide in this test run.
+
+## Rejected Alternatives
+
+**`CREATE OR REPLACE TABLE`** was tried first, since it looks like the
+more idiomatic single-statement fix. It doesn't work here: Spark 3.5.x
+only supports `CREATE OR REPLACE TABLE` for managed tables, and
+`HiveRegistrar` deliberately creates external/unmanaged tables (explicit
+`LOCATION` — see ADR-021). Verified by actually running it against this
+project's Spark version before accepting the DROP+CREATE fix, not
+assumed from documentation alone — a direct instance of the same
+"verify against the real thing" discipline established in ADR-020.
+
+**Per-test isolated Derby metastore and storage** (a
+`HiveIntegrationTestContext` owning its own temp directories, Hive
+config, and Parquet writes, independent of
+`SparkSessionFactory`/`SilverWriter`/`HiveRegistrar`) was proposed and
+rejected. It would have fixed the symptom without exercising the actual
+buggy code — the isolated context reimplemented "write Parquet +
+register as external table" inline rather than calling
+`SilverWriter`/`HiveRegistrar`, meaning the tests would stop proving
+anything about the classes production jobs actually use, and would never
+have caught this bug in the first place. It also hand-rolls Hive config
+independently of `SparkSessionFactory`, contradicting ADR-007's own
+reasoning for centralizing that configuration. Rejected in favor of
+fixing the shared root cause once, in the class whose responsibility it
+actually is.
+
+## Reason
+
+- A single-class fix that removes an entire category of test-ordering
+  bugs (not just this one instance) is a better outcome than three test
+  classes each remembering to `DROP TABLE IF EXISTS` in their own setup
+  — that pattern only works if every future integration-test author
+  remembers to replicate it.
+- Verifying a fix against the real Spark version before committing to it
+  (as with `CREATE OR REPLACE TABLE`) is now a repeated, explicit pattern
+  in this project (see also ADR-019's `day()` correction) — worth
+  treating as a standing discipline, not a one-off.
+- Keeping `TopCustomersServiceTest`/`SalesAnalyticsServiceTest`/
+  `HiveRegistrarTest` unchanged, and fixing `HiveRegistrar` alone, meant
+  the fix is provably scoped to the actual defect — no test files needed
+  to change at all once the root cause was addressed correctly.
+
+## Consequences
+
+- `HiveRegistrar.register(...)` now always re-syncs the catalog schema
+  to match what's on disk, for every call, in both tests and production.
+  Running any `*SilverJob` a second time after a schema change (a new
+  Transformer column, for example) now correctly reflects the new
+  schema, rather than silently serving a stale one.
+- No isolated-metastore-per-test infrastructure exists in this codebase.
+  If a future story genuinely needs test-class-level isolation (e.g.
+  parallel test execution), that remains a real option — but as its own
+  deliberate decision, made when actually needed, not inherited from
+  working around this bug.
+- `gold.top_customers`: grain is one row per customer; `customer_rank`
+  via `RANK() OVER (ORDER BY total_spent DESC)` produces the full ranked
+  list rather than a hardcoded "top N" — which N counts as "top" is left
+  to downstream reporting/consumption, not baked into the Gold ETL job.
+
+---
+
 # Future Architecture Decisions
 
 The following decisions are expected later:
@@ -1508,5 +1661,7 @@ Dashboards
 | 2026-08-02 | Updated ADR-021 Lessons Learned: SparkSessionFactory's null-only singleton guard was found to cause real NoSuchElementException failures and was fixed at the source (isStopped() check added) |
 | 2026-08-02 | Added ADR-022 : US-015 Phase 1 — Order Items Ingestion, proving NullPkDedupValidator's composite-key generalization on a 5th entity, and the Phase 1/Phase 2 sub-issue structure |
 | 2026-08-09 | Added ADR-023 : US-015 Phase 2 — Sales Analytics Gold Layer, closing ADR-021's deferred HiveWriter decision, SalesAnalyticsService's SilverService-shaped I/O, and the delivered-only revenue scope |
+| 2026-08-16 | Added ADR-007 Addendum : SparkSessionFactory-in-tests convention (Hive-catalog tests vs. plain-builder tests, no @AfterAll stop on the shared factory session) |
+| 2026-08-16 | Added ADR-024 : US-016 Top Customers Report — dedicated TopCustomersService (not shared with SalesAnalyticsService), the HiveRegistrar stale-schema bug, and the two rejected fixes (CREATE OR REPLACE TABLE, isolated per-test metastore) |
 
 ---
